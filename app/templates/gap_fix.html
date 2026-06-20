@@ -1,0 +1,600 @@
+{% extends "base.html" %}
+{% block title %}历史缺口修复与可信度评估 - {{ weir.name }}{% endblock %}
+{% block nav_weirs %}class="active"{% endblock %}
+{% block content %}
+<h1>🔧 历史缺口修复与可信度评估 — {{ weir.name }}</h1>
+<p style="margin-bottom:16px">
+    <a href="/weirs/{{ weir.id }}/canals" class="btn btn-sm btn-info">渠闸参数</a>
+    <a href="/weirs/{{ weir.id }}/waterlevels" class="btn btn-sm btn-primary">水位录入</a>
+    <a href="/weirs/{{ weir.id }}/schemes" class="btn btn-sm btn-success">分水分析</a>
+    <a href="/weirs" class="btn btn-sm btn-outline">返回堰坝列表</a>
+</p>
+
+<div class="stat-row">
+    <div class="stat-card">
+        <div class="stat-value">{{ quality.total_records }}</div>
+        <div class="stat-label">水位记录总数</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" style="color:{% if quality.completeness >= 0.9 %}var(--success){% elif quality.completeness >= 0.7 %}var(--accent){% else %}var(--danger){% endif %}">
+            {{ (quality.completeness * 100) | round(1) }}%
+        </div>
+        <div class="stat-label">数据完整度</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" style="color:{% if quality.missing_count == 0 %}var(--success){% else %}var(--danger){% endif %}">
+            {{ quality.missing_count }}
+        </div>
+        <div class="stat-label">缺失天数</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ quality.longest_gap_days }}</div>
+        <div class="stat-label">最长连续缺口(天)</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ quality.historical_count }}</div>
+        <div class="stat-label">历史实测数据</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ quality.simulated_count }}</div>
+        <div class="stat-label">模拟/补录数据</div>
+    </div>
+</div>
+
+<div class="card">
+    <h2>📊 数据质量扫描</h2>
+    <div class="action-bar">
+        <button class="btn btn-info" onclick="rescanQuality()">🔄 重新扫描</button>
+        {% if main_canals %}
+        <form method="post" action="/gap-fix/batch-apply" style="display:inline-flex;gap:8px;align-items:end">
+            <input type="hidden" name="weir_id" value="{{ weir.id }}">
+            <input type="hidden" name="operator" value="系统管理员">
+            <div class="form-group" style="margin-bottom:0">
+                <label>主渠（用于影响分析）</label>
+                <select name="main_canal_id">
+                    <option value="0">不分析影响</option>
+                    {% for mc in main_canals %}
+                    <option value="{{ mc.id }}">{{ mc.name }}（宽{{ mc.width }}m）</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button type="submit" class="btn btn-success" {% if not suggestions %}disabled{% endif %} onclick="return confirm('将为所有 {{ suggestions|length }} 个缺失日期生成修复建议并提交待审核，确认？')">
+                ✨ 一键批量生成修复建议
+            </button>
+        </form>
+        {% endif %}
+    </div>
+    {% if quality.date_range %}
+    <p style="color:var(--muted);font-size:0.9em;margin-bottom:12px">
+        数据覆盖：{{ quality.date_range.start }} ~ {{ quality.date_range.end }}，共 {{ quality.date_range.total_expected_days }} 天
+    </p>
+    {% endif %}
+
+    {% if gaps %}
+    <h3 style="margin-top:16px">检测到的缺口段（共 {{ gaps|length }} 段）</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>缺口序号</th>
+                <th>起始日期</th>
+                <th>结束日期</th>
+                <th>缺失天数</th>
+                <th>前日水位</th>
+                <th>后日水位</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for g in gaps %}
+            <tr>
+                <td><b>#{{ loop.index }}</b></td>
+                <td>{{ g.gap_start }}</td>
+                <td>{{ g.gap_end }}</td>
+                <td><span class="badge {% if g.days > 7 %}badge-draft{% else %}badge-published{% endif %}">{{ g.days }}天</span></td>
+                <td style="font-family:monospace">{{ g.before_level or '-' }}</td>
+                <td style="font-family:monospace">{{ g.after_level or '-' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="alert alert-success" style="margin-top:12px">
+        ✅ 未检测到水位断档，数据连续完整！
+    </div>
+    {% endif %}
+</div>
+
+{% if suggestions %}
+<div class="card">
+    <h2>💡 修复建议（共 {{ suggestions|length }} 条）</h2>
+    <p style="color:var(--muted);font-size:0.88em;margin-bottom:12px">
+        系统基于多种算法自动生成修复建议，按可信度优先推荐。您可选择单条或批量生成修复记录进入审核流程。
+    </p>
+    <table>
+        <thead>
+            <tr>
+                <th>日期</th>
+                <th>所属缺口段</th>
+                <th>推荐方法</th>
+                <th>推荐水位(m)</th>
+                <th>可信度</th>
+                <th>修复依据</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in suggestions %}
+            <tr>
+                <td><b>{{ s.date }}</b></td>
+                <td style="font-size:0.85em">{{ s.gap_segment }}（{{ s.gap_days }}天）</td>
+                <td>
+                    <span class="badge badge-published">{{ s.recommended_method_label }}</span>
+                    {% if s.alternatives|length > 1 %}
+                    <button type="button" class="btn btn-sm btn-outline" style="margin-left:6px" onclick="showAlternatives('{{ loop.index }}')">
+                        对比 {{ s.alternatives|length }} 种方法
+                    </button>
+                    {% endif %}
+                </td>
+                <td style="font-family:monospace;font-weight:700;font-size:1.05em">
+                    {{ "%.4f"|format(s.recommended_level) }}
+                </td>
+                <td>
+                    <span class="badge" style="background:{% if s.recommended_confidence == 'high' %}#d4edda;color:#155724{% elif s.recommended_confidence == 'medium' %}#fef3cd;color:#856404{% else %}#fde8e8;color:var(--danger){% endif %}">
+                        {% if s.recommended_confidence == 'high' %}⭐⭐⭐ 高{% elif s.recommended_confidence == 'medium' %}⭐⭐ 中{% else %}⭐ 低{% endif %}
+                    </span>
+                </td>
+                <td style="font-size:0.85em;color:var(--muted);max-width:360px">{{ s.recommended_basis }}</td>
+                <td>
+                    <button type="button" class="btn btn-sm btn-info" onclick="openApplyForm('{{ s.date }}', {{ '%.4f'|format(s.recommended_level) }}, '{{ s.recommended_method }}', '{{ s.recommended_confidence }}', {{ s.recommended_basis | tojson }})">
+                        📋 生成修复记录
+                    </button>
+                </td>
+            </tr>
+            <tr id="alt-row-{{ loop.index }}" style="display:none;background:#faf6ee">
+                <td colspan="7">
+                    <div class="sub-section">
+                        <h4>多种修复方法对比</h4>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>修复方法</th>
+                                    <th>建议水位(m)</th>
+                                    <th>可信度</th>
+                                    <th>依据说明</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for alt in s.alternatives %}
+                                <tr>
+                                    <td><b>{{ alt.method_label }}</b></td>
+                                    <td style="font-family:monospace">{{ "%.4f"|format(alt.suggested_level) }}</td>
+                                    <td>
+                                        <span class="badge" style="background:{% if alt.confidence == 'high' %}#d4edda;color:#155724{% elif alt.confidence == 'medium' %}#fef3cd;color:#856404{% else %}#fde8e8;color:var(--danger){% endif %}">
+                                            {{ confidence_labels.get(alt.confidence, alt.confidence) }}
+                                        </span>
+                                    </td>
+                                    <td style="font-size:0.85em;color:var(--muted)">{{ alt.basis }}</td>
+                                    <td>
+                                        <button type="button" class="btn btn-sm btn-success" onclick="openApplyForm('{{ s.date }}', {{ '%.4f'|format(alt.suggested_level) }}, '{{ alt.method }}', '{{ alt.confidence }}', {{ alt.basis | tojson }})">
+                                            选用此方法
+                                        </button>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<div class="card">
+    <h2>✍️ 单条人工修复录入</h2>
+    <form method="post" action="/gap-fix/apply">
+        <input type="hidden" name="weir_id" value="{{ weir.id }}">
+        <div class="form-row">
+            <div class="form-group">
+                <label>修复日期</label>
+                <input type="date" name="date" id="apply_date" required>
+            </div>
+            <div class="form-group">
+                <label>修复水位(m)</label>
+                <input type="number" name="fixed_level" id="apply_level" step="0.0001" min="0" required>
+            </div>
+            <div class="form-group">
+                <label>修复方法</label>
+                <select name="method" id="apply_method">
+                    <option value="linear_interpolate">线性插值</option>
+                    <option value="spline_interpolate">样条插值</option>
+                    <option value="rule_based">规则补录</option>
+                    <option value="monthly_average">月均补录</option>
+                    <option value="weekly_average">周均补录</option>
+                    <option value="previous_day">前日延续</option>
+                    <option value="next_day">后日参考</option>
+                    <option value="manual">人工录入</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>可信度</label>
+                <select name="confidence_level" id="apply_confidence">
+                    <option value="high">⭐⭐⭐ 高</option>
+                    <option value="medium" selected>⭐⭐ 中</option>
+                    <option value="low">⭐ 低</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group" style="flex:2">
+                <label>修复依据</label>
+                <input type="text" name="basis" id="apply_basis" placeholder="说明数据来源或推理过程">
+            </div>
+            <div class="form-group">
+                <label>主渠（影响分析）</label>
+                <select name="main_canal_id">
+                    <option value="0">不分析影响</option>
+                    {% for mc in main_canals %}
+                    <option value="{{ mc.id }}">{{ mc.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label>操作人</label>
+                <input type="text" name="operator" value="系统管理员">
+            </div>
+        </div>
+        <div class="form-group">
+            <label>备注</label>
+            <input type="text" name="notes" placeholder="可选：补充说明">
+        </div>
+        <button type="submit" class="btn btn-primary" style="margin-top:8px">📋 提交修复记录（待审核）</button>
+    </form>
+</div>
+
+{% if fix_records %}
+<div class="card">
+    <h2>📋 修复记录审核流程（共 {{ fix_records|length }} 条）</h2>
+    <div class="tabs" id="recordTabs">
+        <button type="button" class="tab-btn active" onclick="filterRecords('all')">全部</button>
+        <button type="button" class="tab-btn" onclick="filterRecords('pending')">待确认</button>
+        <button type="button" class="tab-btn" onclick="filterRecords('applied')">已入库</button>
+        <button type="button" class="tab-btn" onclick="filterRecords('rejected')">已驳回</button>
+    </div>
+    <table id="recordsTable">
+        <thead>
+            <tr>
+                <th>日期</th>
+                <th>原值</th>
+                <th>修复值</th>
+                <th>方法</th>
+                <th>可信度</th>
+                <th>依据</th>
+                <th>状态</th>
+                <th>影响分析</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in fix_records %}
+            <tr data-status="{{ r.status }}">
+                <td><b>{{ r.date }}</b></td>
+                <td style="font-family:monospace;color:var(--muted)">
+                    {% if r.original_level is not none %}{{ "%.4f"|format(r.original_level) }}{% else %}-{% endif %}
+                </td>
+                <td style="font-family:monospace;font-weight:700;color:var(--accent)">
+                    {{ "%.4f"|format(r.fixed_level) }}
+                </td>
+                <td>
+                    <span class="badge badge-draft">{{ method_labels.get(r.method, r.method) }}</span>
+                </td>
+                <td>
+                    <span class="badge" style="background:{% if r.confidence_level == 'high' %}#d4edda;color:#155724{% elif r.confidence_level == 'medium' %}#fef3cd;color:#856404{% else %}#fde8e8;color:var(--danger){% endif %}">
+                        {% if r.confidence_level == 'high' %}⭐⭐⭐ 高{% elif r.confidence_level == 'medium' %}⭐⭐ 中{% else %}⭐ 低{% endif %}
+                    </span>
+                </td>
+                <td style="font-size:0.85em;color:var(--muted);max-width:240px">{{ r.basis or '-' }}</td>
+                <td>
+                    <span class="badge" style="background:{% if r.status == 'applied' %}#d4edda;color:#155724{% elif r.status == 'pending' %}#fef3cd;color:#856404{% elif r.status == 'rejected' %}#fde8e8;color:var(--danger){% else %}#d1ecf1;color:#0c5460{% endif %}">
+                        {{ status_labels.get(r.status, r.status) }}
+                    </span>
+                </td>
+                <td style="font-size:0.85em">
+                    {% if r.impact_total_flow_after or r.impact_avg_coverage_after %}
+                    <div>水量: <b style="font-family:monospace">
+                        {{ "%.3f"|format(r.impact_total_flow_before) }} → {{ "%.3f"|format(r.impact_total_flow_after) }}
+                        {% if r.impact_total_flow_after - r.impact_total_flow_before > 0 %}
+                        <span style="color:var(--success)">↑{{ "%.3f"|format(r.impact_total_flow_after - r.impact_total_flow_before) }}</span>
+                        {% elif r.impact_total_flow_after - r.impact_total_flow_before < 0 %}
+                        <span style="color:var(--danger)">↓{{ "%.3f"|format(r.impact_total_flow_before - r.impact_total_flow_after) }}</span>
+                        {% endif %}
+                    </b></div>
+                    <div>覆盖: <b>
+                        {{ "%.1f"|format(r.impact_avg_coverage_before * 100) }}% → {{ "%.1f"|format(r.impact_avg_coverage_after * 100) }}%
+                        {% if r.impact_avg_coverage_after - r.impact_avg_coverage_before > 0 %}
+                        <span style="color:var(--success)">↑{{ "%.1f"|format((r.impact_avg_coverage_after - r.impact_avg_coverage_before) * 100) }}%</span>
+                        {% elif r.impact_avg_coverage_after - r.impact_avg_coverage_before < 0 %}
+                        <span style="color:var(--danger)">↓{{ "%.1f"|format((r.impact_avg_coverage_before - r.impact_avg_coverage_after) * 100) }}%</span>
+                        {% endif %}
+                    </b></div>
+                    <div>发布: 
+                        {% if r.impact_scheme_publishable_before %}✅{% else %}❌{% endif %}
+                        →
+                        {% if r.impact_scheme_publishable_after %}<b style="color:var(--success)">✅</b>{% else %}<b style="color:var(--danger)">❌</b>{% endif %}
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline" style="margin-top:4px" onclick="showImpactDetail({{ r.id }})">
+                        🔍 查看支渠明细
+                    </button>
+                    {% else %}
+                    <button type="button" class="btn btn-sm btn-outline" onclick="showImpactDetail({{ r.id }})">
+                        📊 查看影响
+                    </button>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if r.status == 'pending' %}
+                    <form method="post" action="/gap-fix/{{ r.id }}/confirm" style="display:inline" onsubmit="return confirm('确认通过并将修复值写入水位数据？')">
+                        <button type="submit" class="btn btn-sm btn-success">✅ 确认入库</button>
+                    </form>
+                    <form method="post" action="/gap-fix/{{ r.id }}/reject" style="display:inline" onsubmit="return confirm('确认驳回此修复记录？')">
+                        <button type="submit" class="btn btn-sm btn-danger">❌ 驳回</button>
+                    </form>
+                    {% endif %}
+                    <form method="post" action="/gap-fix/{{ r.id }}/delete" style="display:inline" onsubmit="return confirm('确认删除此修复记录？（不会影响已入库的水位数据）')">
+                        <button type="submit" class="btn btn-sm btn-outline">🗑️ 删除</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<div class="card">
+    <h2>📈 水位序列可视化</h2>
+    <div id="gapWaterLevelChart" class="chart-container"></div>
+</div>
+
+<div class="modal-overlay" id="applyModal">
+    <div class="modal">
+        <h2>生成修复记录</h2>
+        <form method="post" action="/gap-fix/apply" id="applyFormModal">
+            <input type="hidden" name="weir_id" value="{{ weir.id }}">
+            <div class="form-group">
+                <label>修复日期</label>
+                <input type="text" name="date" id="modal_apply_date" readonly style="background:#f5f0e8">
+            </div>
+            <div class="form-group">
+                <label>修复水位(m)</label>
+                <input type="number" name="fixed_level" id="modal_apply_level" step="0.0001" min="0" required>
+            </div>
+            <div class="form-group">
+                <label>修复方法</label>
+                <select name="method" id="modal_apply_method">
+                    <option value="linear_interpolate">线性插值</option>
+                    <option value="spline_interpolate">样条插值</option>
+                    <option value="rule_based">规则补录</option>
+                    <option value="monthly_average">月均补录</option>
+                    <option value="weekly_average">周均补录</option>
+                    <option value="previous_day">前日延续</option>
+                    <option value="next_day">后日参考</option>
+                    <option value="manual">人工录入</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>可信度</label>
+                <select name="confidence_level" id="modal_apply_confidence">
+                    <option value="high">⭐⭐⭐ 高</option>
+                    <option value="medium">⭐⭐ 中</option>
+                    <option value="low">⭐ 低</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>修复依据</label>
+                <input type="text" name="basis" id="modal_apply_basis">
+            </div>
+            <div class="form-group">
+                <label>主渠（用于影响分析）</label>
+                <select name="main_canal_id">
+                    <option value="0">不分析影响</option>
+                    {% for mc in main_canals %}
+                    <option value="{{ mc.id }}">{{ mc.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label>操作人</label>
+                <input type="text" name="operator" value="系统管理员">
+            </div>
+            <div class="form-group">
+                <label>备注</label>
+                <input type="text" name="notes" placeholder="可选">
+            </div>
+            <div class="action-bar" style="margin-top:16px">
+                <button type="submit" class="btn btn-primary">📋 提交待审核</button>
+                <button type="button" class="btn btn-outline" onclick="closeModal('applyModal')">取消</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="modal-overlay" id="impactModal">
+    <div class="modal" style="max-width:800px">
+        <h2>📊 修复影响分析 — 支渠明细</h2>
+        <div id="impactSummary" style="margin-bottom:16px"></div>
+        <div id="impactBranchTable"></div>
+        <div id="impactFlowChart" class="chart-container" style="min-height:300px"></div>
+        <div id="impactCovChart" class="chart-container" style="min-height:300px"></div>
+        <div class="action-bar" style="margin-top:16px">
+            <button type="button" class="btn btn-outline" onclick="closeModal('impactModal')">关闭</button>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const BRANCH_COLORS = ['#2980b9','#e67e22','#27ae60','#8e44ad','#c0392b','#16a085','#d35400','#2c3e50'];
+
+function closeModal(modalId) { document.getElementById(modalId).classList.remove('show'); }
+function showAlternatives(idx) {
+    const row = document.getElementById('alt-row-' + idx);
+    if (row) row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
+}
+
+function openApplyForm(date, level, method, confidence, basis) {
+    document.getElementById('modal_apply_date').value = date;
+    document.getElementById('modal_apply_level').value = level;
+    document.getElementById('modal_apply_method').value = method;
+    document.getElementById('modal_apply_confidence').value = confidence;
+    document.getElementById('modal_apply_basis').value = basis || '';
+    document.getElementById('applyModal').classList.add('show');
+}
+
+function filterRecords(status) {
+    document.querySelectorAll('#recordTabs .tab-btn').forEach(b => b.classList.remove('active'));
+    event.target.classList.add('active');
+    const rows = document.querySelectorAll('#recordsTable tbody tr');
+    rows.forEach(r => {
+        if (status === 'all' || r.dataset.status === status) {
+            r.style.display = '';
+        } else {
+            r.style.display = 'none';
+        }
+    });
+}
+
+function showImpactDetail(recordId) {
+    const modal = document.getElementById('impactModal');
+    modal.classList.add('show');
+    document.getElementById('impactSummary').innerHTML = '<p style="color:var(--muted)">正在计算影响分析...</p>';
+    document.getElementById('impactBranchTable').innerHTML = '';
+    fetch('/gap-fix/' + recordId + '/impact')
+        .then(r => r.json())
+        .then(data => {
+            if (!data.has_impact) {
+                document.getElementById('impactSummary').innerHTML =
+                    '<div class="alert alert-error">' + (data.message || '无法进行影响分析') + '</div>';
+                return;
+            }
+            const imp = data.impact;
+            let sumHtml = '<div class="stat-row">';
+            sumHtml += '<div class="stat-card"><div class="stat-value" style="font-size:1.2em">' + imp.flow_before.toFixed(3) + ' → <b style="color:var(--accent)">' + imp.flow_after.toFixed(3) + '</b></div><div class="stat-label">总水量 (m³/s)</div></div>';
+            const flowDelta = imp.flow_delta;
+            sumHtml += '<div class="stat-card"><div class="stat-value" style="font-size:1.2em;color:' + (flowDelta >= 0 ? 'var(--success)' : 'var(--danger)') + '">' + (flowDelta >= 0 ? '+' : '') + flowDelta.toFixed(3) + '</div><div class="stat-label">水量变化</div></div>';
+            sumHtml += '<div class="stat-card"><div class="stat-value" style="font-size:1.2em">' + (imp.coverage_before * 100).toFixed(1) + '% → <b style="color:var(--accent)">' + (imp.coverage_after * 100).toFixed(1) + '%</b></div><div class="stat-label">平均覆盖率</div></div>';
+            const covDelta = imp.coverage_delta * 100;
+            sumHtml += '<div class="stat-card"><div class="stat-value" style="font-size:1.2em;color:' + (covDelta >= 0 ? 'var(--success)' : 'var(--danger)') + '">' + (covDelta >= 0 ? '+' : '') + covDelta.toFixed(1) + '%</div><div class="stat-label">覆盖率变化</div></div>';
+            sumHtml += '<div class="stat-card"><div class="stat-value">' + (imp.publishable_before ? '✅' : '❌') + ' → <b>' + (imp.publishable_after ? '✅' : '❌') + '</b></div><div class="stat-label">方案可发布</div></div>';
+            sumHtml += '</div>';
+            document.getElementById('impactSummary').innerHTML = sumHtml;
+            let tbl = '<table><thead><tr><th>支渠</th><th>修复前水量</th><th>修复后水量</th><th>水量变化</th><th>修复前覆盖</th><th>修复后覆盖</th><th>覆盖变化</th></tr></thead><tbody>';
+            const branches = imp.branch_details || [];
+            branches.forEach((br, i) => {
+                const fd = br.flow_delta;
+                const cd = br.coverage_delta * 100;
+                tbl += '<tr>';
+                tbl += '<td><b>' + br.name + '</b></td>';
+                tbl += '<td style="font-family:monospace">' + br.flow_before.toFixed(4) + '</td>';
+                tbl += '<td style="font-family:monospace;font-weight:700">' + br.flow_after.toFixed(4) + '</td>';
+                tbl += '<td style="color:' + (fd >= 0 ? 'var(--success)' : 'var(--danger)') + ';font-weight:600">' + (fd >= 0 ? '+' : '') + fd.toFixed(4) + '</td>';
+                tbl += '<td>' + (br.coverage_before * 100).toFixed(1) + '%</td>';
+                tbl += '<td style="font-weight:700">' + (br.coverage_after * 100).toFixed(1) + '%</td>';
+                tbl += '<td style="color:' + (cd >= 0 ? 'var(--success)' : 'var(--danger)') + ';font-weight:600">' + (cd >= 0 ? '+' : '') + cd.toFixed(1) + '%</td>';
+                tbl += '</tr>';
+            });
+            tbl += '</tbody></table>';
+            document.getElementById('impactBranchTable').innerHTML = tbl;
+            const brNames = branches.map(b => b.name);
+            const flowBefore = branches.map(b => b.flow_before);
+            const flowAfter = branches.map(b => b.flow_after);
+            const covBefore = branches.map(b => (b.coverage_before * 100).toFixed(1));
+            const covAfter = branches.map(b => (b.coverage_after * 100).toFixed(1));
+            const flowTraces = [
+                { x: brNames, y: flowBefore, type: 'bar', name: '修复前', marker: { color: '#95a5a6' } },
+                { x: brNames, y: flowAfter, type: 'bar', name: '修复后', marker: { color: 'var(--accent)' } }
+            ];
+            Plotly.newPlot('impactFlowChart', flowTraces, {
+                title: '各支渠分水量对比 (m³/s)',
+                barmode: 'group',
+                paper_bgcolor: 'rgba(0,0,0,0)',
+                plot_bgcolor: 'rgba(0,0,0,0)',
+                margin: { t: 40, b: 80, l: 60, r: 20 },
+                yaxis: { rangemode: 'tozero', title: '水量 m³/s' }
+            }, { responsive: true });
+            const covTraces = [
+                { x: brNames, y: covBefore, type: 'bar', name: '修复前', marker: { color: '#95a5a6' } },
+                { x: brNames, y: covAfter, type: 'bar', name: '修复后', marker: { color: '#27ae60' } }
+            ];
+            Plotly.newPlot('impactCovChart', covTraces, {
+                title: '各支渠灌溉覆盖率对比 (%)',
+                barmode: 'group',
+                paper_bgcolor: 'rgba(0,0,0,0)',
+                plot_bgcolor: 'rgba(0,0,0,0)',
+                margin: { t: 40, b: 80, l: 60, r: 20 },
+                yaxis: { rangemode: 'tozero', range: [0, 110], title: '覆盖率 %' }
+            }, { responsive: true });
+        });
+}
+
+function rescanQuality() {
+    const weirId = {{ weir.id }};
+    fetch('/weirs/' + weirId + '/gap-fix/scan')
+        .then(r => r.json())
+        .then(data => {
+            alert('扫描完成！发现 ' + data.quality.missing_count + ' 天缺失，' + data.gaps.length + ' 段缺口，' + data.suggestions.length + ' 条修复建议。页面将刷新。');
+            window.location.reload();
+        });
+}
+
+(function() {
+    const dates = [{% for l in water_levels %}{{ l.date | tojson }}{% if not loop.last %},{% endif %}{% endfor %}];
+    const levels = [{% for l in water_levels %}{{ l.level }}{% if not loop.last %},{% endif %}{% endfor %}];
+    const colors = [{% for l in water_levels %}{% if l.is_simulated %}'rgba(184,134,11,0.8)'{% else %}'rgba(39,174,96,0.8)'{% endif %}{% if not loop.last %},{% endif %}{% endfor %}];
+    {% if suggestions %}
+    const fixDates = [{% for s in suggestions %}{{ s.date | tojson }}{% if not loop.last %},{% endif %}{% endfor %}];
+    const fixLevels = [{% for s in suggestions %}{{ s.recommended_level }}{% if not loop.last %},{% endif %}{% endfor %}];
+    {% else %}
+    const fixDates = [];
+    const fixLevels = [];
+    {% endif %}
+    {% if fix_records %}
+    const recDates = [{% for r in fix_records %}{% if r.status == 'applied' or r.status == 'confirmed' %}{{ r.date | tojson }},{% endif %}{% endfor %}];
+    const recLevels = [{% for r in fix_records %}{% if r.status == 'applied' or r.status == 'confirmed' %}{{ r.fixed_level }},{% endif %}{% endfor %}];
+    {% else %}
+    const recDates = [];
+    const recLevels = [];
+    {% endif %}
+    const traces = [{
+        x: dates, y: levels, type: 'scatter', mode: 'lines+markers',
+        name: '已录入水位', line: { color: '#2980b9', width: 2 },
+        marker: { size: 7, color: colors }
+    }];
+    if (fixDates.length) {
+        traces.push({
+            x: fixDates, y: fixLevels, type: 'scatter', mode: 'markers',
+            name: '建议修复值', marker: { size: 10, color: '#e67e22', symbol: 'diamond' }
+        });
+    }
+    if (recDates.length) {
+        traces.push({
+            x: recDates, y: recLevels, type: 'scatter', mode: 'markers',
+            name: '已确认修复', marker: { size: 12, color: '#8e44ad', symbol: 'star' }
+        });
+    }
+    Plotly.newPlot('gapWaterLevelChart', traces, {
+        title: '水位序列 — 历史数据与修复建议对比',
+        xaxis: { title: '日期' },
+        yaxis: { title: '水位 (m)', rangemode: 'tozero' },
+        margin: { t: 50, b: 60, l: 70, r: 20 },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)',
+        legend: { orientation: 'h', y: -0.15 }
+    }, { responsive: true });
+})();
+</script>
+{% endblock %}

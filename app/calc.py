@@ -489,3 +489,410 @@ def run_consistency_checks(
         "detail": f"共 {bc_count} 条支渠参与分水" if bc_count > 0 else "主渠下没有任何支渠",
     })
     return checks
+
+
+def detect_gap_segments(date_strs: List[str]) -> List[dict]:
+    if len(date_strs) < 2:
+        return []
+    sorted_dates = sorted(set(date_strs))
+    segments = []
+    try:
+        prev_dt = datetime.strptime(sorted_dates[0], "%Y-%m-%d")
+        current_gap_start = None
+        current_gap_days = 0
+        for i in range(1, len(sorted_dates)):
+            curr_dt = datetime.strptime(sorted_dates[i], "%Y-%m-%d")
+            diff = (curr_dt - prev_dt).days
+            if diff > 1:
+                missing_dates = []
+                gap_start_dt = prev_dt + timedelta(days=1)
+                for j in range(1, diff):
+                    missing_dates.append((prev_dt + timedelta(days=j)).strftime("%Y-%m-%d"))
+                segments.append({
+                    "start_date": sorted_dates[i - 1],
+                    "end_date": sorted_dates[i],
+                    "gap_start": gap_start_dt.strftime("%Y-%m-%d"),
+                    "gap_end": (curr_dt - timedelta(days=1)).strftime("%Y-%m-%d"),
+                    "days": diff - 1,
+                    "missing_dates": missing_dates,
+                    "before_level": None,
+                    "after_level": None,
+                })
+            prev_dt = curr_dt
+    except (ValueError, TypeError):
+        return []
+    return segments
+
+
+def compute_monthly_averages(water_levels: List[dict]) -> Dict[str, float]:
+    month_data: Dict[str, List[float]] = {}
+    for wl in water_levels:
+        try:
+            dt = datetime.strptime(wl["date"], "%Y-%m-%d")
+            key = f"{dt.month:02d}"
+            if key not in month_data:
+                month_data[key] = []
+            month_data[key].append(wl["level"])
+        except (ValueError, TypeError):
+            continue
+    return {k: round(sum(v) / len(v), 4) for k, v in month_data.items() if v}
+
+
+def compute_weekly_averages(water_levels: List[dict]) -> Dict[str, float]:
+    week_data: Dict[str, List[float]] = {}
+    for wl in water_levels:
+        try:
+            dt = datetime.strptime(wl["date"], "%Y-%m-%d")
+            key = f"{dt.isocalendar()[1]:02d}"
+            if key not in week_data:
+                week_data[key] = []
+            week_data[key].append(wl["level"])
+        except (ValueError, TypeError):
+            continue
+    return {k: round(sum(v) / len(v), 4) for k, v in week_data.items() if v}
+
+
+def interpolate_linear(before_date: str, after_date: str, before_level: float, after_level: float, target_date: str) -> float:
+    try:
+        dt_before = datetime.strptime(before_date, "%Y-%m-%d")
+        dt_after = datetime.strptime(after_date, "%Y-%m-%d")
+        dt_target = datetime.strptime(target_date, "%Y-%m-%d")
+        total_days = (dt_after - dt_before).days
+        if total_days <= 0:
+            return round(before_level, 4)
+        offset = (dt_target - dt_before).days
+        result = before_level + (after_level - before_level) * (offset / total_days)
+        return round(max(0, result), 4)
+    except (ValueError, TypeError):
+        return round(before_level, 4)
+
+
+def interpolate_spline(before_dates: List[str], before_levels: List[float], after_dates: List[str], after_levels: List[float], target_date: str) -> float:
+    if len(before_dates) < 2 or len(after_dates) < 2:
+        if before_levels:
+            return round(before_levels[-1], 4)
+        return 0.0
+    try:
+        dt_target = datetime.strptime(target_date, "%Y-%m-%d")
+        dt_points = []
+        lv_points = []
+        for d, l in zip(before_dates[-3:], before_levels[-3:]):
+            dt_points.append(datetime.strptime(d, "%Y-%m-%d"))
+            lv_points.append(l)
+        for d, l in zip(after_dates[:3], after_levels[:3]):
+            dt_points.append(datetime.strptime(d, "%Y-%m-%d"))
+            lv_points.append(l)
+        if len(dt_points) < 3:
+            return round((before_levels[-1] + after_levels[0]) / 2, 4)
+        day_nums = [(d - dt_points[0]).days for d in dt_points]
+        target_day = (dt_target - dt_points[0]).days
+        n = len(day_nums)
+        result = 0.0
+        for i in range(n):
+            term = lv_points[i]
+            for j in range(n):
+                if i != j:
+                    if day_nums[i] != day_nums[j]:
+                        term *= (target_day - day_nums[j]) / (day_nums[i] - day_nums[j])
+                    else:
+                        term = 0
+                        break
+            result += term
+        return round(max(0, result), 4)
+    except (ValueError, TypeError):
+        if before_levels:
+            return round(before_levels[-1], 4)
+        return 0.0
+
+
+def rule_based_fill(target_date: str, water_levels: List[dict], monthly_avg: Dict[str, float], weekly_avg: Dict[str, float]) -> float:
+    try:
+        dt = datetime.strptime(target_date, "%Y-%m-%d")
+        m_key = f"{dt.month:02d}"
+        w_key = f"{dt.isocalendar()[1]:02d}"
+        candidates = []
+        if m_key in monthly_avg:
+            candidates.append(monthly_avg[m_key])
+        if w_key in weekly_avg:
+            candidates.append(weekly_avg[w_key])
+        if candidates:
+            return round(sum(candidates) / len(candidates), 4)
+        same_month_years = []
+        for wl in water_levels:
+            try:
+                w_dt = datetime.strptime(wl["date"], "%Y-%m-%d")
+                if w_dt.month == dt.month:
+                    same_month_years.append(wl["level"])
+            except (ValueError, TypeError):
+                continue
+        if same_month_years:
+            return round(sum(same_month_years) / len(same_month_years), 4)
+        if water_levels:
+            lvls = [wl["level"] for wl in water_levels]
+            return round(sum(lvls) / len(lvls), 4)
+        return 0.0
+    except (ValueError, TypeError):
+        if water_levels:
+            lvls = [wl["level"] for wl in water_levels]
+            return round(sum(lvls) / len(lvls), 4)
+        return 0.0
+
+
+def assess_confidence(method: str, gap_days: int, before_exists: bool, after_exists: bool, surrounding_count: int = 0) -> tuple:
+    if method == "linear_interpolate" and before_exists and after_exists:
+        if gap_days <= 2:
+            return "high", "前后日数据完整，缺口短，线性插值可靠性高"
+        elif gap_days <= 7:
+            return "medium", "缺口在一周内，前后数据可支撑线性趋势外推"
+        else:
+            return "low", "缺口超过一周，线性插值可能偏离实际水文过程"
+    elif method == "spline_interpolate" and surrounding_count >= 4:
+        if gap_days <= 5:
+            return "high", "多日数据支撑样条插值，曲线拟合度较好"
+        elif gap_days <= 14:
+            return "medium", "样条插值覆盖较长缺口，可靠性中等"
+        else:
+            return "low", "缺口过长，样条插值可能产生不合理震荡"
+    elif method == "monthly_average":
+        return "medium", "基于同月历史均值，反映季节规律但忽略短期波动"
+    elif method == "weekly_average":
+        return "medium", "基于同周历史均值，时间分辨率高于月均但数据量较少"
+    elif method == "previous_day":
+        if before_exists:
+            return "low", "直接沿用前一日数据，无法反映日内变化"
+        else:
+            return "low", "无前置数据，可靠性差"
+    elif method == "next_day":
+        if after_exists:
+            return "low", "直接使用后一日数据，无法反映日内变化"
+        else:
+            return "low", "无后置数据，可靠性差"
+    elif method == "rule_based":
+        return "medium", "基于季节/周均规则补录，符合历史规律但缺失突发性"
+    else:
+        return "low", "修复方法未明确分类"
+
+
+def generate_gap_fix_suggestions(water_levels: List[dict], gap_segments: List[dict]) -> List[dict]:
+    if not water_levels or not gap_segments:
+        return []
+    sorted_levels = sorted(water_levels, key=lambda x: x["date"])
+    date_to_level = {wl["date"]: wl["level"] for wl in sorted_levels}
+    existing_dates = sorted(date_to_level.keys())
+    monthly_avg = compute_monthly_averages(sorted_levels)
+    weekly_avg = compute_weekly_averages(sorted_levels)
+    suggestions = []
+    for seg in gap_segments:
+        seg_start = seg["start_date"]
+        seg_end = seg["end_date"]
+        before_level = date_to_level.get(seg_start, 0)
+        after_level = date_to_level.get(seg_end, 0)
+        before_idx = existing_dates.index(seg_start) if seg_start in existing_dates else -1
+        after_idx = existing_dates.index(seg_end) if seg_end in existing_dates else -1
+        before_dates_3 = existing_dates[max(0, before_idx - 2):before_idx + 1] if before_idx >= 0 else []
+        before_levels_3 = [date_to_level[d] for d in before_dates_3]
+        after_dates_3 = existing_dates[after_idx:after_idx + 3] if after_idx >= 0 else []
+        after_levels_3 = [date_to_level[d] for d in after_dates_3]
+        for md in seg["missing_dates"]:
+            alternatives = []
+            if before_level is not None and after_level is not None:
+                lin_val = interpolate_linear(seg_start, seg_end, before_level, after_level, md)
+                conf_lin, basis_lin = assess_confidence(
+                    "linear_interpolate", seg["days"], True, True
+                )
+                alternatives.append({
+                    "method": "linear_interpolate",
+                    "method_label": "线性插值",
+                    "suggested_level": lin_val,
+                    "confidence": conf_lin,
+                    "basis": basis_lin + f"（前日{before_level:.4f}m，后日{after_level:.4f}m，缺口{seg['days']}天）",
+                })
+            if len(before_dates_3) + len(after_dates_3) >= 4:
+                spline_val = interpolate_spline(before_dates_3, before_levels_3, after_dates_3, after_levels_3, md)
+                conf_sp, basis_sp = assess_confidence(
+                    "spline_interpolate", seg["days"], True, True,
+                    len(before_dates_3) + len(after_dates_3)
+                )
+                alternatives.append({
+                    "method": "spline_interpolate",
+                    "method_label": "样条插值",
+                    "suggested_level": spline_val,
+                    "confidence": conf_sp,
+                    "basis": basis_sp + f"（使用周边{len(before_dates_3) + len(after_dates_3)}个已知点拟合）",
+                })
+            rule_val = rule_based_fill(md, sorted_levels, monthly_avg, weekly_avg)
+            conf_rb, basis_rb = assess_confidence("rule_based", seg["days"], True, True)
+            alternatives.append({
+                "method": "rule_based",
+                "method_label": "规则补录",
+                "suggested_level": rule_val,
+                "confidence": conf_rb,
+                "basis": basis_rb,
+            })
+            alternatives.sort(key=lambda x: {"high": 0, "medium": 1, "low": 2}.get(x["confidence"], 3))
+            best = alternatives[0]
+            suggestions.append({
+                "date": md,
+                "gap_segment": f"{seg['gap_start']} ~ {seg['gap_end']}",
+                "gap_days": seg["days"],
+                "before_date": seg_start,
+                "before_level": before_level,
+                "after_date": seg_end,
+                "after_level": after_level,
+                "recommended_method": best["method"],
+                "recommended_method_label": best["method_label"],
+                "recommended_level": best["suggested_level"],
+                "recommended_confidence": best["confidence"],
+                "recommended_basis": best["basis"],
+                "alternatives": alternatives,
+            })
+    return suggestions
+
+
+def compute_impact_analysis(
+    weir_id: int,
+    target_date: str,
+    before_level: Optional[float],
+    after_level: float,
+    main_canal_width: float,
+    branch_canals: List[dict],
+    rule: str = "equal",
+) -> dict:
+    impact = {
+        "flow_before": 0.0,
+        "flow_after": 0.0,
+        "flow_delta": 0.0,
+        "coverage_before": 0.0,
+        "coverage_after": 0.0,
+        "coverage_delta": 0.0,
+        "branch_details": [],
+        "publishable_before": True,
+        "publishable_after": True,
+    }
+    if before_level is not None and before_level > 0:
+        total_flow_before = compute_main_canal_flow(before_level, main_canal_width)
+        branch_data_before = []
+        for bc in branch_canals:
+            branch_data_before.append({
+                "id": bc["id"],
+                "name": bc["name"],
+                "position": bc["position"],
+                "width": bc["width"],
+                "acreage": bc.get("acreage", 0),
+                "farm_type": bc.get("farm_type", "general"),
+                "gate_opening": bc.get("gate_opening", 100),
+                "water_level": before_level,
+            })
+        dist_before = compute_distribution(total_flow_before, branch_data_before, rule)
+        impact["flow_before"] = total_flow_before
+        impact["publishable_before"] = not check_over_allocation(total_flow_before, dist_before)
+        cov_sum_before = 0.0
+        for br in dist_before:
+            bc_orig = next((b for b in branch_data_before if b["id"] == br["branch_canal_id"]), None)
+            cov = compute_coverage(
+                br["flow"], bc_orig.get("acreage", 0) if bc_orig else 0,
+                bc_orig.get("farm_type", "general") if bc_orig else "general", before_level,
+            )
+            cov_sum_before += cov
+            impact["branch_details"].append({
+                "branch_canal_id": br["branch_canal_id"],
+                "name": br["name"],
+                "flow_before": round(br["flow"], 4),
+                "coverage_before": round(cov, 4),
+                "flow_after": 0.0,
+                "coverage_after": 0.0,
+                "flow_delta": 0.0,
+                "coverage_delta": 0.0,
+            })
+        impact["coverage_before"] = round(cov_sum_before / len(dist_before), 4) if dist_before else 0.0
+    if after_level > 0:
+        total_flow_after = compute_main_canal_flow(after_level, main_canal_width)
+        branch_data_after = []
+        for bc in branch_canals:
+            branch_data_after.append({
+                "id": bc["id"],
+                "name": bc["name"],
+                "position": bc["position"],
+                "width": bc["width"],
+                "acreage": bc.get("acreage", 0),
+                "farm_type": bc.get("farm_type", "general"),
+                "gate_opening": bc.get("gate_opening", 100),
+                "water_level": after_level,
+            })
+        dist_after = compute_distribution(total_flow_after, branch_data_after, rule)
+        impact["flow_after"] = total_flow_after
+        impact["flow_delta"] = round(total_flow_after - impact["flow_before"], 4)
+        impact["publishable_after"] = not check_over_allocation(total_flow_after, dist_after)
+        cov_sum_after = 0.0
+        for br in dist_after:
+            bc_orig = next((b for b in branch_data_after if b["id"] == br["branch_canal_id"]), None)
+            cov = compute_coverage(
+                br["flow"], bc_orig.get("acreage", 0) if bc_orig else 0,
+                bc_orig.get("farm_type", "general") if bc_orig else "general", after_level,
+            )
+            cov_sum_after += cov
+            existing = next((bd for bd in impact["branch_details"] if bd["branch_canal_id"] == br["branch_canal_id"]), None)
+            if existing:
+                existing["flow_after"] = round(br["flow"], 4)
+                existing["coverage_after"] = round(cov, 4)
+                existing["flow_delta"] = round(br["flow"] - existing["flow_before"], 4)
+                existing["coverage_delta"] = round(cov - existing["coverage_before"], 4)
+            else:
+                impact["branch_details"].append({
+                    "branch_canal_id": br["branch_canal_id"],
+                    "name": br["name"],
+                    "flow_before": 0.0,
+                    "coverage_before": 0.0,
+                    "flow_after": round(br["flow"], 4),
+                    "coverage_after": round(cov, 4),
+                    "flow_delta": round(br["flow"], 4),
+                    "coverage_delta": round(cov, 4),
+                })
+        impact["coverage_after"] = round(cov_sum_after / len(dist_after), 4) if dist_after else 0.0
+        impact["coverage_delta"] = round(impact["coverage_after"] - impact["coverage_before"], 4)
+    return impact
+
+
+def scan_water_level_quality(water_levels: List[dict]) -> dict:
+    total = len(water_levels)
+    if total == 0:
+        return {
+            "total_records": 0,
+            "simulated_count": 0,
+            "historical_count": 0,
+            "missing_count": 0,
+            "gap_segments": [],
+            "longest_gap_days": 0,
+            "date_range": None,
+            "completeness": 0.0,
+        }
+    sorted_levels = sorted(water_levels, key=lambda x: x["date"])
+    dates = [wl["date"] for wl in sorted_levels]
+    try:
+        first_dt = datetime.strptime(dates[0], "%Y-%m-%d")
+        last_dt = datetime.strptime(dates[-1], "%Y-%m-%d")
+        total_expected = (last_dt - first_dt).days + 1
+    except (ValueError, TypeError):
+        first_dt = None
+        last_dt = None
+        total_expected = total
+    simulated = sum(1 for wl in water_levels if wl.get("is_simulated"))
+    historical = total - simulated
+    gaps = detect_gap_segments(dates)
+    missing_count = sum(g["days"] for g in gaps)
+    longest_gap = max((g["days"] for g in gaps), default=0)
+    completeness = round(total / max(1, total + missing_count), 4)
+    return {
+        "total_records": total,
+        "simulated_count": simulated,
+        "historical_count": historical,
+        "missing_count": missing_count,
+        "gap_segments": gaps,
+        "longest_gap_days": longest_gap,
+        "date_range": {
+            "start": dates[0],
+            "end": dates[-1],
+            "total_expected_days": total_expected,
+        },
+        "completeness": completeness,
+    }

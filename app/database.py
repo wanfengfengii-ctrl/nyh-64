@@ -378,6 +378,45 @@ def init_db():
             FOREIGN KEY (weir_id) REFERENCES weirs(id) ON DELETE CASCADE
         )
     """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS gap_fix_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            weir_id INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            original_level REAL,
+            fixed_level REAL NOT NULL,
+            method TEXT NOT NULL DEFAULT 'interpolate',
+            confidence_level TEXT NOT NULL DEFAULT 'medium',
+            basis TEXT DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending',
+            operator TEXT DEFAULT '',
+            confirmed_by TEXT DEFAULT '',
+            confirmed_at TIMESTAMP,
+            impact_total_flow_before REAL DEFAULT 0,
+            impact_total_flow_after REAL DEFAULT 0,
+            impact_avg_coverage_before REAL DEFAULT 0,
+            impact_avg_coverage_after REAL DEFAULT 0,
+            impact_scheme_publishable_before INTEGER DEFAULT 0,
+            impact_scheme_publishable_after INTEGER DEFAULT 0,
+            notes TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (weir_id) REFERENCES weirs(id) ON DELETE CASCADE,
+            UNIQUE(weir_id, date)
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS gap_scan_summaries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            weir_id INTEGER NOT NULL,
+            total_records INTEGER DEFAULT 0,
+            missing_count INTEGER DEFAULT 0,
+            gap_segments INTEGER DEFAULT 0,
+            longest_gap_days INTEGER DEFAULT 0,
+            simulated_count INTEGER DEFAULT 0,
+            scanned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (weir_id) REFERENCES weirs(id) ON DELETE CASCADE
+        )
+    """)
 
     def _has_column(table, col):
         rows = conn.execute(f"PRAGMA table_info({table})").fetchall()

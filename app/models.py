@@ -432,3 +432,45 @@ class ExperimentReviewCreate(BaseModel):
     improvement_suggestions: str = ""
     key_findings: str = ""
     reviewer: str = ""
+
+class GapFixSuggestionAlternative(BaseModel):
+    method: str
+    method_label: str
+    suggested_level: float
+    confidence: str
+    basis: str
+
+class GapFixSuggestion(BaseModel):
+    date: str
+    gap_segment: str
+    gap_days: int
+    before_date: str
+    before_level: Optional[float] = None
+    after_date: str
+    after_level: Optional[float] = None
+    recommended_method: str
+    recommended_method_label: str
+    recommended_level: float
+    recommended_confidence: str
+    recommended_basis: str
+    alternatives: List[GapFixSuggestionAlternative] = []
+
+class GapFixRecordCreate(BaseModel):
+    weir_id: int
+    date: str
+    fixed_level: float
+    method: str = "linear_interpolate"
+    confidence_level: str = "medium"
+    basis: str = ""
+    operator: str = "系统管理员"
+    notes: str = ""
+
+class GapFixConfirm(BaseModel):
+    record_id: int
+    confirmed_by: str = "审核员"
+    notes: str = ""
+
+class GapFixBatchApply(BaseModel):
+    weir_id: int
+    suggestions: List[GapFixRecordCreate] = []
+    operator: str = "系统管理员"
