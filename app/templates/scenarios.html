@@ -1,0 +1,753 @@
+{% extends "base.html" %}
+{% block title %}历史规则场景推演 - {{ weir.name }}{% endblock %}
+{% block nav_weirs %}class="active"{% endblock %}
+{% block content %}
+<h1>历史规则场景推演 — {{ weir.name }}</h1>
+<p style="margin-bottom:16px;color:var(--muted);font-size:0.92em">
+    按季节、年份与农田类型配置分水策略，自动推演并对比不同规则下的分水结果与灌溉覆盖效果
+</p>
+<p style="margin-bottom:20px">
+    <a href="/weirs/{{ weir.id }}/canals" class="btn btn-sm btn-info">渠闸参数</a>
+    <a href="/weirs/{{ weir.id }}/waterlevels" class="btn btn-sm btn-primary">水位录入</a>
+    <a href="/weirs/{{ weir.id }}/schemes" class="btn btn-sm btn-success">分水方案</a>
+    <a href="/weirs" class="btn btn-sm btn-outline">返回堰坝列表</a>
+</p>
+
+{% if not main_canals %}
+<div class="card">
+    <div class="empty-state">
+        <div class="icon">🏗️</div>
+        <p>请先在「渠闸参数」中添加主渠和支渠</p>
+    </div>
+</div>
+{% elif not water_levels %}
+<div class="card">
+    <div class="empty-state">
+        <div class="icon">💧</div>
+        <p>请先在「水位录入」中添加水位数据</p>
+    </div>
+</div>
+{% else %}
+
+<div class="tabs" id="mainTabs">
+    <button class="tab-btn active" onclick="switchTab('seasonal')">📅 季节规则配置</button>
+    <button class="tab-btn" onclick="switchTab('scenario')">🔬 场景推演</button>
+    <button class="tab-btn" onclick="switchTab('compare')">📊 结果对比</button>
+    <button class="tab-btn" onclick="switchTab('quality')" id="tabQuality">🔍 数据质量</button>
+</div>
+
+<div id="tab-seasonal" class="tab-content">
+    <div class="card">
+        <h2>新增季节分水规则</h2>
+        <form method="post" action="/weirs/{{ weir.id }}/seasonal-rules">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>规则名称</label>
+                    <input type="text" name="name" required placeholder="如：春季枯水期优先水田">
+                </div>
+                <div class="form-group">
+                    <label>起始月份</label>
+                    <select name="start_month">
+                        {% for m in range(1, 13) %}
+                        <option value="{{ m }}" {% if m==3 %}selected{% endif %}>{{ m }}月</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>结束月份</label>
+                    <select name="end_month">
+                        {% for m in range(1, 13) %}
+                        <option value="{{ m }}" {% if m==5 %}selected{% endif %}>{{ m }}月</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>分水规则</label>
+                    <select name="rule">
+                        <option value="equal">均分</option>
+                        <option value="downstream_first">优先下游</option>
+                        <option value="acreage_ratio">按田亩比例</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>优先农田类型（可选）</label>
+                    <select name="priority_farm_type">
+                        <option value="">— 不设优先 —</option>
+                        {% for key, label in farm_type_labels.items() %}
+                        <option value="{{ key }}">{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>优先级系数（&gt;1 增大比例）</label>
+                    <input type="number" name="priority_ratio" step="0.1" min="0.1" value="1.5">
+                </div>
+                <div class="form-group">
+                    <label>水位触发阈值（米）</label>
+                    <input type="number" name="water_level_threshold" step="0.01" min="0" value="0" placeholder="0=不设阈值">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>规则说明</label>
+                <input type="text" name="description" placeholder="规则背景或历史依据">
+            </div>
+            <button type="submit" class="btn btn-primary" style="margin-top:8px">添加季节规则</button>
+        </form>
+    </div>
+
+    <div class="card">
+        <h2>已配置的季节规则（{{ seasonal_rules|length }}）</h2>
+        {% if seasonal_rules %}
+        <table>
+            <thead><tr>
+                <th>名称</th><th>适用月份</th><th>分水规则</th>
+                <th>优先农田</th><th>优先级</th><th>水位阈值</th>
+                <th>说明</th><th>操作</th>
+            </tr></thead>
+            <tbody>
+            {% for sr in seasonal_rules %}
+            <tr>
+                <td><strong>{{ sr.name }}</strong></td>
+                <td>{{ sr.start_month }}月 - {{ sr.end_month }}月</td>
+                <td>{{ rule_labels.get(sr.rule, sr.rule) }}</td>
+                <td>
+                    {% if sr.priority_farm_type %}
+                    {{ farm_type_labels.get(sr.priority_farm_type, sr.priority_farm_type) }}
+                    {% else %}-{% endif %}
+                </td>
+                <td>{% if sr.priority_ratio and sr.priority_ratio != 1 %}x{{ sr.priority_ratio }}{% else %}-{% endif %}</td>
+                <td>{% if sr.water_level_threshold %}{{ sr.water_level_threshold }}m{% else %}-{% endif %}</td>
+                <td style="max-width:200px;font-size:0.85em;color:var(--muted)">{{ sr.description or '-' }}</td>
+                <td>
+                    <button class="btn btn-sm btn-outline" onclick="editSeasonalRule({{ sr.id }}, '{{ sr.name }}', {{ sr.start_month }}, {{ sr.end_month }}, '{{ sr.rule }}', '{{ sr.priority_farm_type }}', {{ sr.priority_ratio or 1 }}, {{ sr.water_level_threshold or 0 }}, '{{ sr.description or '' }}')">编辑</button>
+                    <form method="post" action="/seasonal-rules/{{ sr.id }}/delete" style="display:inline" onsubmit="return confirm('确认删除此季节规则？')">
+                        <button type="submit" class="btn btn-sm btn-danger">删除</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state"><p>暂无季节规则，请先添加</p></div>
+        {% endif %}
+    </div>
+
+    <div class="card" id="editSeasonalRuleCard" style="display:none">
+        <h2>编辑季节规则</h2>
+        <form id="editSeasonalRuleForm" method="post" action="">
+            <input type="hidden" id="editRuleId">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>规则名称</label>
+                    <input type="text" name="name" id="editName" required>
+                </div>
+                <div class="form-group">
+                    <label>起始月份</label>
+                    <select name="start_month" id="editStartMonth">
+                        {% for m in range(1, 13) %}
+                        <option value="{{ m }}">{{ m }}月</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>结束月份</label>
+                    <select name="end_month" id="editEndMonth">
+                        {% for m in range(1, 13) %}
+                        <option value="{{ m }}">{{ m }}月</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>分水规则</label>
+                    <select name="rule" id="editRule">
+                        <option value="equal">均分</option>
+                        <option value="downstream_first">优先下游</option>
+                        <option value="acreage_ratio">按田亩比例</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>优先农田类型</label>
+                    <select name="priority_farm_type" id="editFarmType">
+                        <option value="">— 不设优先 —</option>
+                        {% for key, label in farm_type_labels.items() %}
+                        <option value="{{ key }}">{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>优先级系数</label>
+                    <input type="number" name="priority_ratio" id="editRatio" step="0.1" min="0.1">
+                </div>
+                <div class="form-group">
+                    <label>水位触发阈值</label>
+                    <input type="number" name="water_level_threshold" id="editThreshold" step="0.01" min="0">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>规则说明</label>
+                <input type="text" name="description" id="editDesc">
+            </div>
+            <div class="action-bar">
+                <button type="submit" class="btn btn-primary">保存修改</button>
+                <button type="button" class="btn btn-outline" onclick="document.getElementById('editSeasonalRuleCard').style.display='none'">取消</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="tab-scenario" class="tab-content" style="display:none">
+    <div class="card">
+        <h2>创建推演场景</h2>
+        <form method="post" action="/weirs/{{ weir.id }}/scenarios" id="createScenarioForm">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>场景名称</label>
+                    <input type="text" name="name" required placeholder="如：光绪三年春夏分水推演">
+                </div>
+                <div class="form-group">
+                    <label>主渠</label>
+                    <select name="main_canal_id" id="scenarioMainCanal">
+                        {% for mc in main_canals %}
+                        <option value="{{ mc.id }}">{{ mc.name }}（宽{{ mc.width }}m）</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>起始年份（可选）</label>
+                    <select name="year_from" id="yearFrom">
+                        <option value="">全部</option>
+                        {% for y in available_years %}
+                        <option value="{{ y }}">{{ y }}年</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>结束年份（可选）</label>
+                    <select name="year_to" id="yearTo">
+                        <option value="">全部</option>
+                        {% for y in available_years %}
+                        <option value="{{ y }}">{{ y }}年</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>应用季节规则（可多选，月份靠前优先匹配）</label>
+                <div id="seasonalRuleChecks" style="display:flex;flex-wrap:wrap;gap:12px;margin-top:6px">
+                    {% for sr in seasonal_rules %}
+                    <label style="display:flex;align-items:center;gap:6px;padding:8px 14px;border:1px solid var(--border);border-radius:6px;cursor:pointer">
+                        <input type="checkbox" class="sr-check" value="{{ sr.id }}" onchange="updateSelectedRules()">
+                        <span style="font-size:0.9em">
+                            <strong>{{ sr.name }}</strong>
+                            <span style="color:var(--muted)">({{ sr.start_month }}-{{ sr.end_month }}月, {{ rule_labels.get(sr.rule) }})</span>
+                        </span>
+                    </label>
+                    {% endfor %}
+                    {% if not seasonal_rules %}
+                    <span style="color:var(--muted);font-size:0.9em">暂无季节规则，将按统一基础规则推演</span>
+                    {% endif %}
+                </div>
+                <input type="hidden" name="seasonal_rule_ids" id="selectedRuleIds">
+            </div>
+            <div class="form-group">
+                <label>场景说明</label>
+                <input type="text" name="description" placeholder="如：模拟春旱情景下水田优先分水效果">
+            </div>
+            <button type="submit" class="btn btn-primary" style="margin-top:8px">创建场景</button>
+        </form>
+    </div>
+
+    <div class="card">
+        <h2>推演场景列表（{{ scenarios|length }}）</h2>
+        {% if scenarios %}
+        <table>
+            <thead><tr>
+                <th>场景</th><th>主渠</th><th>年份范围</th>
+                <th>应用规则</th><th>状态</th><th>创建时间</th><th>操作</th>
+            </tr></thead>
+            <tbody>
+            {% for s in scenarios %}
+            <tr id="scenario-{{ s.id }}">
+                <td><strong>{{ s.name }}</strong>
+                    {% if s.description %}<br><span style="font-size:0.82em;color:var(--muted)">{{ s.description }}</span>{% endif %}
+                </td>
+                <td>
+                    {% set mc = main_canals | selectattr('id','equalto', s.main_canal_id) | list %}
+                    {{ mc[0].name if mc else '-' }}
+                </td>
+                <td>
+                    {% if s.year_from or s.year_to %}
+                    {{ s.year_from or '?' }} - {{ s.year_to or '?' }}
+                    {% else %}全部{% endif %}
+                </td>
+                <td style="font-size:0.85em">
+                    {% set links = scenario_rules.get(s.id, []) %}
+                    {% if links %}
+                        {% for l in links %}
+                        <span class="badge badge-draft" style="margin-right:4px">{{ l.name }}</span>
+                        {% endfor %}
+                    {% else %}
+                    <span style="color:var(--muted)">基础规则</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if s.status == 'computed' %}
+                    <span class="badge badge-published">已推演</span>
+                    {% else %}
+                    <span class="badge badge-draft">待推演</span>
+                    {% endif %}
+                </td>
+                <td style="font-size:0.85em">{{ (s.created_at or '')[:16] }}</td>
+                <td>
+                    {% if s.main_canal_id %}
+                    <form method="post" action="/scenarios/{{ s.id }}/run" style="display:inline" onsubmit="return confirm('开始推演？可能需要数秒时间')">
+                        <button type="submit" class="btn btn-sm btn-info">▶ 推演</button>
+                    </form>
+                    {% endif %}
+                    <button class="btn btn-sm btn-success" onclick="toggleScenarioChart({{ s.id }})">📈 查看</button>
+                    <form method="post" action="/scenarios/{{ s.id }}/delete" style="display:inline" onsubmit="return confirm('确认删除此场景？所有推演结果将丢失')">
+                        <button type="submit" class="btn btn-sm btn-danger">删除</button>
+                    </form>
+                </td>
+            </tr>
+            <tr id="scenario-chart-row-{{ s.id }}" style="display:none">
+                <td colspan="7" style="padding:0">
+                    <div style="padding:20px;background:#faf6ee;border-top:1px solid var(--border)">
+                        <div id="scenario-chart-{{ s.id }}" class="chart-container" style="min-height:350px"></div>
+                        <div id="scenario-coverage-{{ s.id }}"></div>
+                        <div id="scenario-table-{{ s.id }}"></div>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state"><p>暂无推演场景，请先创建</p></div>
+        {% endif %}
+    </div>
+</div>
+
+<div id="tab-compare" class="tab-content" style="display:none">
+    <div class="card">
+        <h2>分水规则与场景综合对比</h2>
+        <div class="form-row" style="margin-bottom:16px">
+            <div class="form-group">
+                <label>选择主渠</label>
+                <select id="compareMainCanal" onchange="loadCompareChart()">
+                    {% for mc in main_canals %}
+                    <option value="{{ mc.id }}">{{ mc.name }}（宽{{ mc.width }}m）</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label>选择对比场景（可多选）</label>
+                <div id="compareScenarioList" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px">
+                    {% for s in scenarios if s.status == 'computed' %}
+                    <label style="display:flex;align-items:center;gap:4px;padding:4px 10px;border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.88em">
+                        <input type="checkbox" class="compare-scenario-check" value="{{ s.id }}" onchange="loadCompareChart()">
+                        {{ s.name }}
+                    </label>
+                    {% endfor %}
+                    {% if not (scenarios | selectattr('status','equalto','computed') | list) %}
+                    <span style="color:var(--muted);font-size:0.88em">（暂无可对比的推演场景，基础规则始终参与对比）</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        <div id="compareChartFlow" class="chart-container" style="min-height:420px"></div>
+        <div id="compareChartCoverage" class="chart-container" style="min-height:350px;margin-top:12px"></div>
+        <div id="compareSummaryTable"></div>
+    </div>
+</div>
+
+<div id="tab-quality" class="tab-content" style="display:none">
+    <div id="data-quality">
+        <div class="stat-row">
+            <div class="stat-card">
+                <div class="stat-value">{{ water_levels|length }}</div>
+                <div class="stat-label">水位记录</div>
+            </div>
+            <div class="stat-card" style="cursor:pointer" onclick="scrollToSection('missingSection')">
+                <div class="stat-value" style="{% if missing_dates %}color:var(--danger){% endif %}">{{ missing_dates|length }}</div>
+                <div class="stat-label">缺失日期</div>
+            </div>
+            <div class="stat-card" style="cursor:pointer" onclick="scrollToSection('anomalySection')">
+                <div class="stat-value" style="{% if anomalies %}color:var(--danger){% endif %}">{{ anomalies|length }}</div>
+                <div class="stat-label">异常数据</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ available_years|length }}</div>
+                <div class="stat-label">覆盖年份</div>
+            </div>
+        </div>
+
+        <div class="card" id="missingSection">
+            <h2>⚠️ 缺失日期检测与修复</h2>
+            {% if missing_dates %}
+            <p style="font-size:0.9em;color:var(--muted);margin-bottom:12px">
+                共检测到 <strong style="color:var(--danger)">{{ missing_dates|length }}</strong> 天数据缺失。系统已根据前后数据提供插值建议，建议值标记为模拟数据。
+            </p>
+            <form method="post" action="/weirs/{{ weir.id }}/fill-missing" id="fillMissingForm" onsubmit="collectFillDates()">
+                <table style="max-height:350px;overflow-y:auto;display:block">
+                    <thead><tr>
+                        <th style="width:40px"><input type="checkbox" id="checkAllMissing" onchange="toggleAllMissing(this)"></th>
+                        <th>缺失日期</th>
+                        <th>建议水位</th>
+                        <th>插值方法</th>
+                        <th>置信度</th>
+                    </tr></thead>
+                    <tbody>
+                    {% for sug in fill_suggestions %}
+                    <tr>
+                        <td><input type="checkbox" class="missing-check" value="{{ sug.date }}"></td>
+                        <td>{{ sug.date }}（{{ season_names.get(((sug.date[5:7] | int + 2) // 3 * 3 - 2 if sug.date else 1), '?' ) }}）</td>
+                        <td style="font-family:monospace">{{ sug.level }}</td>
+                        <td>
+                            {% if sug.method == 'interpolate' %}线性插值
+                            {% elif sug.method == 'previous' %}取前一日
+                            {% else %}取后一日{% endif %}
+                        </td>
+                        <td>
+                            {% if sug.confidence == 'high' %}<span class="badge badge-published">高</span>
+                            {% elif sug.confidence == 'medium' %}<span class="badge badge-draft">中</span>
+                            {% else %}<span class="badge badge-draft">低</span>{% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                <input type="hidden" name="selected_dates" id="selectedFillDates">
+                <div class="action-bar" style="margin-top:12px">
+                    <button type="submit" class="btn btn-primary">🔧 一键修复所选日期</button>
+                    <span style="color:var(--muted);font-size:0.85em;align-self:center">修复后的数据将标注为"模拟数据"</span>
+                </div>
+            </form>
+            {% else %}
+            <div class="empty-state" style="padding:24px">
+                <div class="icon">✅</div>
+                <p>数据完整，没有缺失日期</p>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="card" id="anomalySection">
+            <h2>⚠️ 异常数据提示</h2>
+            {% if anomalies %}
+            <p style="font-size:0.9em;color:var(--muted);margin-bottom:12px">
+                共检测到 <strong style="color:var(--danger)">{{ anomalies|length }}</strong> 条疑似异常数据，请结合实际情况核实。
+            </p>
+            <table>
+                <thead><tr>
+                    <th>日期</th><th>类型</th><th>水位</th><th>详情</th><th>建议</th>
+                </tr></thead>
+                <tbody>
+                {% for a in anomalies %}
+                <tr style="{% if a.anomaly_type == 'negative' %}background:#fde8e8{% endif %}">
+                    <td>{{ a.date }}</td>
+                    <td>
+                        {% if a.anomaly_type == 'outlier' %}
+                        <span class="badge badge-draft">📉 离群值</span>
+                        {% elif a.anomaly_type == 'sudden_change' %}
+                        <span class="badge badge-draft">⚡ 骤变</span>
+                        {% else %}
+                        <span class="badge badge-draft" style="background:#f8d7da;color:#721c24">❌ 负值</span>
+                        {% endif %}
+                    </td>
+                    <td style="font-family:monospace">{{ a.level }}</td>
+                    <td style="font-size:0.88em">{{ a.detail }}</td>
+                    <td style="font-size:0.88em;color:var(--info)">{{ a.suggestion }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty-state" style="padding:24px">
+                <div class="icon">✅</div>
+                <p>未检测到异常数据</p>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="card">
+            <h2>📋 支渠参数完整性检查</h2>
+            <table>
+                <thead><tr>
+                    <th>主渠</th><th>支渠</th><th>田亩数</th><th>农田类型</th><th>闸口数</th><th>状态</th>
+                </tr></thead>
+                <tbody>
+                {% for mc_id, bcs in branch_canals_map.items() %}
+                    {% set mc = main_canals | selectattr('id','equalto', mc_id) | list %}
+                    {% if bcs %}
+                        {% for bc in bcs %}
+                        <tr>
+                            <td>{{ mc[0].name if mc else '-' }}</td>
+                            <td>{{ bc.name }}（位置{{ bc.position }}）</td>
+                            <td>
+                                {% if bc.acreage > 0 %}
+                                {{ bc.acreage }} 亩
+                                {% else %}
+                                <span style="color:var(--danger)">未设置 ⚠️</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge badge-draft">
+                                    {{ farm_type_labels.get(bc.farm_type, bc.farm_type) }}
+                                </span>
+                            </td>
+                            <td>
+                                {% if bc.gate_name %}
+                                {{ bc.gate_name }}（均开{{ bc.gate_opening | int }}%）
+                                {% else %}
+                                <span style="color:var(--muted)">无闸口，按100%</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if bc.acreage > 0 and bc.gate_name %}
+                                <span class="badge badge-published">✓ 完整</span>
+                                {% else %}
+                                <span class="badge badge-draft">待完善</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                    <tr>
+                        <td>{{ mc[0].name if mc else '-' }}</td>
+                        <td colspan="5" style="color:var(--muted)">（无支渠）</td>
+                    </tr>
+                    {% endif %}
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if main_canals and water_levels %}
+<script>
+const RULE_COLORS = { equal: '#2980b9', downstream_first: '#e67e22', acreage_ratio: '#27ae60' };
+const RULE_LABELS = { equal: '均分', downstream_first: '优先下游', acreage_ratio: '按田亩比例' };
+const BRANCH_COLORS = ['#2980b9','#e67e22','#27ae60','#8e44ad','#c0392b','#16a085','#d35400','#2c3e50','#7f8c8d','#f39c12'];
+const SCENARIO_COLORS = ['#2980b9','#27ae60','#8e44ad','#d35400','#c0392b','#16a085','#7f8c8d','#f39c12'];
+
+function switchTab(tabName) {
+    document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+    document.getElementById('tab-' + tabName).style.display = 'block';
+    event.target.classList.add('active');
+    if (tabName === 'compare') setTimeout(loadCompareChart, 100);
+    if (tabName === 'quality') {
+        const badge = document.getElementById('tabQuality');
+        if (badge) badge.style.color = '';
+    }
+}
+function scrollToSection(id) { switchTab('quality'); setTimeout(() => document.getElementById(id).scrollIntoView({behavior:'smooth'}), 100); }
+function updateSelectedRules() {
+    const ids = Array.from(document.querySelectorAll('.sr-check:checked')).map(c => c.value);
+    document.getElementById('selectedRuleIds').value = ids.join(',');
+}
+function editSeasonalRule(id, name, sm, em, rule, ft, ratio, thr, desc) {
+    document.getElementById('editSeasonalRuleCard').style.display = 'block';
+    document.getElementById('editSeasonalRuleForm').action = '/seasonal-rules/' + id + '/edit';
+    document.getElementById('editName').value = name;
+    document.getElementById('editStartMonth').value = sm;
+    document.getElementById('editEndMonth').value = em;
+    document.getElementById('editRule').value = rule;
+    document.getElementById('editFarmType').value = ft;
+    document.getElementById('editRatio').value = ratio;
+    document.getElementById('editThreshold').value = thr;
+    document.getElementById('editDesc').value = desc;
+    document.getElementById('editSeasonalRuleCard').scrollIntoView({behavior:'smooth'});
+}
+function toggleAllMissing(cb) {
+    document.querySelectorAll('.missing-check').forEach(c => c.checked = cb.checked);
+}
+function collectFillDates() {
+    const dates = Array.from(document.querySelectorAll('.missing-check:checked')).map(c => c.value);
+    document.getElementById('selectedFillDates').value = dates.join(',');
+    if (!dates.length) { event.preventDefault(); alert('请先选择要修复的日期'); }
+}
+function toggleScenarioChart(sid) {
+    const row = document.getElementById('scenario-chart-row-' + sid);
+    if (!row) return;
+    if (row.style.display === 'none') {
+        row.style.display = 'table-row';
+        loadScenarioChart(sid);
+    } else {
+        row.style.display = 'none';
+    }
+}
+function loadScenarioChart(sid) {
+    fetch('/scenarios/' + sid + '/chart-data')
+        .then(r => r.json()).then(data => {
+            const chartDiv = document.getElementById('scenario-chart-' + sid);
+            const covDiv = document.getElementById('scenario-coverage-' + sid);
+            const tblDiv = document.getElementById('scenario-table-' + sid);
+            if (!data.dates || !data.dates.length) {
+                chartDiv.innerHTML = '<div class="empty-state"><p>该场景尚未推演，请点击「推演」按钮</p></div>';
+                covDiv.innerHTML = ''; tblDiv.innerHTML = ''; return;
+            }
+            const flowTraces = [];
+            const covTraces = [];
+            data.branches.forEach((br, idx) => {
+                flowTraces.push({
+                    x: data.dates, y: data.flows[br.id],
+                    type: 'scatter', mode: 'lines+markers', name: br.name + ' 水量',
+                    line: { color: BRANCH_COLORS[idx % BRANCH_COLORS.length], width: 2 }, marker: { size: 4 }
+                });
+                covTraces.push({
+                    x: data.dates, y: data.coverages[br.id].map(v => (v*100).toFixed(1)),
+                    type: 'scatter', mode: 'lines', name: br.name + ' 覆盖率',
+                    line: { color: BRANCH_COLORS[idx % BRANCH_COLORS.length], width: 2, dash: 'dot' }
+                });
+            });
+            const layout = {
+                title: '分水量时间序列（m³/s）',
+                xaxis: { title: '日期' }, yaxis: { title: '分水量', rangemode: 'tozero' },
+                margin: { t: 40, b: 60, l: 70, r: 20 }, legend: { orientation: 'h', y: -0.2 },
+                paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)'
+            };
+            Plotly.newPlot('scenario-chart-' + sid, flowTraces, layout, {responsive: true});
+            let covHtml = '<h3 style="margin-top:16px">灌溉覆盖率统计</h3>';
+            covHtml += '<div class="stat-row">';
+            covHtml += '<div class="stat-card"><div class="stat-value">' + (data.summary.total_flow) + '</div><div class="stat-label">总水量</div></div>';
+            covHtml += '<div class="stat-card"><div class="stat-value" style="color:' + (data.summary.overall_avg_coverage >= 0.7 ? 'var(--success)' : 'var(--danger)') + '">' + (data.summary.overall_avg_coverage * 100).toFixed(1) + '%</div><div class="stat-label">总体平均覆盖率</div></div>';
+            covHtml += '</div><table><thead><tr><th>支渠</th><th>平均水量(m³/s)</th><th>平均覆盖率</th><th>覆盖评价</th></tr></thead><tbody>';
+            data.branches.forEach(br => {
+                const f = data.summary.avg_flow_per_branch[br.id] || 0;
+                const c = data.summary.avg_coverage_per_branch[br.id] || 0;
+                const cls = c >= 0.8 ? 'badge-published' : (c >= 0.5 ? 'badge-draft' : '');
+                const evalTxt = c >= 0.8 ? '充足' : (c >= 0.5 ? '基本满足' : (c > 0 ? '不足' : '无供水'));
+                covHtml += '<tr><td>' + br.name + '</td><td>' + f + '</td><td><span class="badge ' + cls + '">' + (c*100).toFixed(1) + '%</span></td><td>' + evalTxt + '</td></tr>';
+            });
+            covHtml += '</tbody></table>';
+            covDiv.innerHTML = covHtml;
+            let tbl = '<h3 style="margin-top:16px">逐日明细</h3><table><thead><tr><th>日期</th>';
+            data.branches.forEach(br => { tbl += '<th colspan="2">' + br.name + '</th>'; });
+            tbl += '</tr><tr><th></th>';
+            data.branches.forEach(() => { tbl += '<th>水量</th><th>覆盖率</th>'; });
+            tbl += '</tr></thead><tbody>';
+            data.dates.forEach((d, di) => {
+                tbl += '<tr><td>' + d + '</td>';
+                data.branches.forEach(br => {
+                    const f = data.flows[br.id][di];
+                    const c = data.coverages[br.id][di];
+                    tbl += '<td style="font-family:monospace">' + f + '</td><td>' + (c*100).toFixed(0) + '%</td>';
+                });
+                tbl += '</tr>';
+            });
+            tbl += '</tbody></table>';
+            tblDiv.innerHTML = tbl;
+        });
+}
+function loadCompareChart() {
+    const mcId = document.getElementById('compareMainCanal').value;
+    const sidList = Array.from(document.querySelectorAll('.compare-scenario-check:checked')).map(c => c.value).join(',');
+    const weirId = {{ weir.id }};
+    if (!mcId) return;
+    fetch('/weirs/' + weirId + '/scenario-compare-data?main_canal_id=' + mcId + '&scenario_ids=' + sidList)
+        .then(r => r.json()).then(data => {
+            if (!data.scenarios || !data.scenarios.length) {
+                document.getElementById('compareChartFlow').innerHTML = '<div class="empty-state"><p>无数据</p></div>';
+                document.getElementById('compareChartCoverage').innerHTML = '';
+                document.getElementById('compareSummaryTable').innerHTML = '';
+                return;
+            }
+            const allDates = [];
+            const dateSet = {};
+            data.scenarios.forEach(s => s.dates.forEach(d => { if (!dateSet[d]) { dateSet[d]=1; allDates.push(d); } }));
+            allDates.sort();
+            const flowTraces = [];
+            const covTraces = [];
+            data.scenarios.forEach((s, si) => {
+                data.branch_canals.forEach((bc, bi) => {
+                    const xArr = [], yArrF = [], yArrC = [];
+                    allDates.forEach(d => {
+                        const di = s.dates.indexOf(d);
+                        xArr.push(d);
+                        const flows = s.branch_flows[bc.id] || [];
+                        const covs = s.branch_coverages[bc.id] || [];
+                        yArrF.push(di >= 0 ? flows[di] : null);
+                        yArrC.push(di >= 0 ? ((covs[di] || 0) * 100) : null);
+                    });
+                    const dashStyle = s.type === 'rule' ? ['solid','dash','dot'][si % 3] : 'solid';
+                    const lineColor = s.type === 'rule' ? Object.values(RULE_COLORS)[si] : SCENARIO_COLORS[(si-3) % SCENARIO_COLORS.length];
+                    flowTraces.push({
+                        x: xArr, y: yArrF, type: 'scatter', mode: 'lines', connectgaps: true,
+                        name: s.name + ' / ' + bc.name,
+                        line: { color: lineColor, width: si < 3 ? 2.5 : 2, dash: dashStyle },
+                        legendgroup: 's' + si
+                    });
+                    covTraces.push({
+                        x: xArr, y: yArrC, type: 'scatter', mode: 'lines', connectgaps: true,
+                        name: s.name + ' / ' + bc.name,
+                        line: { color: lineColor, width: si < 3 ? 2.5 : 2, dash: dashStyle },
+                        legendgroup: 's' + si, showlegend: false
+                    });
+                });
+            });
+            const layoutFlow = {
+                title: '各方案分水量对比（m³/s）',
+                xaxis: { title: '日期' }, yaxis: { title: '分水量', rangemode: 'tozero' },
+                margin: { t: 50, b: 80, l: 70, r: 20 }, legend: { orientation: 'h', y: -0.3, font: { size: 10 } },
+                paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)'
+            };
+            const layoutCov = {
+                title: '各方案灌溉覆盖率对比（%）',
+                xaxis: { title: '日期' }, yaxis: { title: '覆盖率 %', rangemode: 'tozero', range: [0, 110] },
+                margin: { t: 50, b: 80, l: 70, r: 20 }, showlegend: false,
+                paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)'
+            };
+            Plotly.newPlot('compareChartFlow', flowTraces, layoutFlow, {responsive: true});
+            Plotly.newPlot('compareChartCoverage', covTraces, layoutCov, {responsive: true});
+            let sum = '<h3 style="margin-top:16px">综合指标对比表</h3><table><thead><tr><th>方案</th><th>指标</th>';
+            data.branch_canals.forEach(bc => { sum += '<th>' + bc.name + '<br><span style="font-size:0.75em;color:var(--muted)">' + (bc.acreage || 0) + '亩·' + (bc.farm_type || '') + '</span></th>'; });
+            sum += '<th>总体</th></tr></thead><tbody>';
+            data.scenarios.forEach(s => {
+                let totalF = 0, totalC = 0, cnt = 0;
+                let rowF = '<tr><td rowspan="2" style="vertical-align:middle;font-weight:600">' + s.name + '</td><td>日均水量</td>';
+                let rowC = '<tr><td>平均覆盖率</td>';
+                data.branch_canals.forEach(bc => {
+                    const fs = s.branch_flows[bc.id] || [];
+                    const cs = s.branch_coverages[bc.id] || [];
+                    const af = fs.length ? (fs.reduce((a,b)=>a+b,0)/fs.length) : 0;
+                    const ac = cs.length ? (cs.reduce((a,b)=>a+b,0)/cs.length) : 0;
+                    totalF += af; totalC += ac; cnt++;
+                    rowF += '<td style="font-family:monospace">' + af.toFixed(3) + '</td>';
+                    const covColor = ac >= 0.7 ? 'color:var(--success)' : (ac < 0.4 ? 'color:var(--danger)' : '');
+                    rowC += '<td style="' + covColor + ';font-weight:600">' + (ac*100).toFixed(1) + '%</td>';
+                });
+                rowF += '<td style="font-weight:700;font-family:monospace">' + totalF.toFixed(3) + '</td></tr>';
+                const oac = cnt ? totalC/cnt : 0;
+                rowC += '<td style="' + (oac >= 0.7 ? 'color:var(--success)' : 'color:var(--danger)') + ';font-weight:700">' + (oac*100).toFixed(1) + '%</td></tr>';
+                sum += rowF + rowC;
+            });
+            sum += '</tbody></table>';
+            sum += '<p style="margin-top:12px;color:var(--muted);font-size:0.85em">💡 提示：覆盖率 ≥70% 为绿色（达标），<40% 为红色（严重不足）。建议优先对比覆盖率和下游公平性。</p>';
+            document.getElementById('compareSummaryTable').innerHTML = sum;
+        });
+}
+
+{% if anomalies or missing_dates %}
+(function(){
+    const qt = document.getElementById('tabQuality');
+    if (qt) qt.style.color = 'var(--danger)';
+})();
+{% endif %}
+{% for s in scenarios if s.status == 'computed' %}
+{% endfor %}
+</script>
+{% endif %}
+{% endblock %}

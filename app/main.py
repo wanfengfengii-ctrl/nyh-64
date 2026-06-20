@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from app.database import init_db
-from app.routers import weirs, canals, waterlevels, schemes
+from app.routers import weirs, canals, waterlevels, schemes, scenarios
 
 app = FastAPI(title="传统堰坝分水研究系统")
 
@@ -16,6 +16,7 @@ app.include_router(weirs.router)
 app.include_router(canals.router)
 app.include_router(waterlevels.router)
 app.include_router(schemes.router)
+app.include_router(scenarios.router)
 
 static_dir = Path(__file__).parent / "static"
 static_dir.mkdir(exist_ok=True)

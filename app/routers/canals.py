@@ -71,7 +71,7 @@ def delete_main_canal(canal_id: int):
     return RedirectResponse(url=f"/weirs/{weir_id}/canals", status_code=303)
 
 @router.post("/main-canals/{canal_id}/branch-canals")
-def create_branch_canal(canal_id: int, name: str = Form(...), width: float = Form(0.5), acreage: float = Form(0.0), position: int = Form(0), description: str = Form("")):
+def create_branch_canal(canal_id: int, name: str = Form(...), width: float = Form(0.5), acreage: float = Form(0.0), farm_type: str = Form("general"), position: int = Form(0), description: str = Form("")):
     if width < 0:
         raise HTTPException(status_code=400, detail="支渠宽度不能为负数")
     if acreage < 0:
@@ -81,14 +81,14 @@ def create_branch_canal(canal_id: int, name: str = Form(...), width: float = For
     if not mc:
         db.close()
         raise HTTPException(status_code=404, detail="主渠不存在")
-    db.execute("INSERT INTO branch_canals (main_canal_id, name, width, acreage, position, description) VALUES (?, ?, ?, ?, ?, ?)", (canal_id, name, width, acreage, position, description))
+    db.execute("INSERT INTO branch_canals (main_canal_id, name, width, acreage, farm_type, position, description) VALUES (?, ?, ?, ?, ?, ?, ?)", (canal_id, name, width, acreage, farm_type, position, description))
     db.commit()
     weir_id = mc["weir_id"]
     db.close()
     return RedirectResponse(url=f"/weirs/{weir_id}/canals", status_code=303)
 
 @router.post("/branch-canals/{bc_id}/edit")
-def update_branch_canal(bc_id: int, name: str = Form(...), width: float = Form(0.5), acreage: float = Form(0.0), position: int = Form(0), description: str = Form("")):
+def update_branch_canal(bc_id: int, name: str = Form(...), width: float = Form(0.5), acreage: float = Form(0.0), farm_type: str = Form("general"), position: int = Form(0), description: str = Form("")):
     if width < 0:
         raise HTTPException(status_code=400, detail="支渠宽度不能为负数")
     if acreage < 0:
@@ -98,7 +98,7 @@ def update_branch_canal(bc_id: int, name: str = Form(...), width: float = Form(0
     if not bc:
         db.close()
         raise HTTPException(status_code=404, detail="支渠不存在")
-    db.execute("UPDATE branch_canals SET name=?, width=?, acreage=?, position=?, description=? WHERE id=?", (name, width, acreage, position, description, bc_id))
+    db.execute("UPDATE branch_canals SET name=?, width=?, acreage=?, farm_type=?, position=?, description=? WHERE id=?", (name, width, acreage, farm_type, position, description, bc_id))
     db.commit()
     mc = db.execute("SELECT * FROM main_canals WHERE id = ?", (bc["main_canal_id"],)).fetchone()
     weir_id = mc["weir_id"]

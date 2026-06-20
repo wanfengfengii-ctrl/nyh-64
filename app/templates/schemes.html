@@ -6,6 +6,7 @@
 <p style="margin-bottom:16px">
     <a href="/weirs/{{ weir.id }}/canals" class="btn btn-sm btn-info">渠闸参数</a>
     <a href="/weirs/{{ weir.id }}/waterlevels" class="btn btn-sm btn-primary">水位录入</a>
+    <a href="/weirs/{{ weir.id }}/scenarios" class="btn btn-sm btn-info">🎯 历史规则推演</a>
     <a href="/weirs" class="btn btn-sm btn-outline">返回堰坝列表</a>
 </p>
 
@@ -41,20 +42,39 @@
                     <option value="acreage_ratio">按田亩比例</option>
                 </select>
             </div>
+            <div class="form-group" style="flex:2;min-width:250px">
+                <label>版本说明（可选）</label>
+                <input type="text" name="change_note" placeholder="如：初始版本；调整分水比例等">
+            </div>
         </div>
         <button type="submit" class="btn btn-primary" style="margin-top:12px">创建方案</button>
     </form>
 </div>
 
 <div class="card">
-    <h2>方案列表</h2>
+    <h2>方案列表（支持版本管理）</h2>
     {% if schemes %}
     <table>
-        <thead><tr><th>名称</th><th>规则</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
+        <thead><tr>
+            <th>名称</th><th>版本</th><th>规则</th><th>状态</th>
+            <th>变更说明</th><th>创建时间</th><th>操作</th>
+        </tr></thead>
         <tbody>
             {% for s in schemes %}
             <tr>
-                <td>{{ s.name }}</td>
+                <td><strong>{{ s.name }}</strong>
+                    {% if s.parent_id %}
+                    <br><span style="font-size:0.78em;color:var(--muted)">
+                        源自版本 {{ scheme_versions.get(s.id).version if scheme_versions.get(s.id) else '?' }}
+                        （{{ scheme_versions.get(s.id).name if scheme_versions.get(s.id) else '' }}）
+                    </span>
+                    {% endif %}
+                </td>
+                <td>
+                    <span class="badge {% if s.version and s.version > 1 %}badge-published{% else %}badge-draft{% endif %}">
+                        V{{ s.version or 1 }}
+                    </span>
+                </td>
                 <td>
                     <form method="post" action="/schemes/{{ s.id }}/update-rule" style="display:inline-flex;gap:4px;align-items:center">
                         <select name="rule" onchange="this.form.submit()" style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:0.85em">
@@ -71,24 +91,27 @@
                     <span class="badge badge-published">已发布</span>
                     {% endif %}
                 </td>
-                <td>{{ s.created_at }}</td>
+                <td style="max-width:180px;font-size:0.82em;color:var(--muted)">{{ s.change_note or '-' }}</td>
+                <td style="font-size:0.82em">{{ (s.created_at or '')[:16] }}</td>
                 <td>
                     {% if main_canals %}
                     <form method="post" action="/schemes/{{ s.id }}/compute" style="display:inline-flex;gap:4px;align-items:center">
                         <select name="main_canal_id" style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:0.82em">
                             {% for mc in main_canals %}
-                            <option value="{{ mc.id }}" {% if s.main_canal_id == mc.id %}selected{% endif %}>{{ mc.name }}（宽{{ mc.width }}m）</option>
+                            <option value="{{ mc.id }}" {% if s.main_canal_id == mc.id %}selected{% endif %}>{{ mc.name }}（{{ mc.width }}m）</option>
                             {% endfor %}
                         </select>
                         <button type="submit" class="btn btn-sm btn-info" onclick="return confirm('计算将覆盖已有结果，确认？')">计算</button>
                     </form>
                     {% endif %}
+                    <button type="button" class="btn btn-sm btn-outline" onclick="openNewVersionModal({{ s.id }}, '{{ s.name }}', '{{ s.rule }}')">📋 新版本</button>
+                    <button type="button" class="btn btn-sm btn-success" onclick="runConsistencyCheck({{ s.id }})">🔍 校验</button>
                     {% if s.status == 'draft' %}
-                    <form method="post" action="/schemes/{{ s.id }}/publish" style="display:inline" onsubmit="return confirm('确认发布此方案？')">
+                    <form method="post" action="/schemes/{{ s.id }}/publish" style="display:inline" onsubmit="return confirm('发布前将自动进行一致性校验，确认？')">
                         <button type="submit" class="btn btn-sm btn-success">发布</button>
                     </form>
                     {% endif %}
-                    <form method="post" action="/schemes/{{ s.id }}/delete" style="display:inline" onsubmit="return confirm('确认删除此方案？')">
+                    <form method="post" action="/schemes/{{ s.id }}/delete" style="display:inline" onsubmit="return confirm('确认删除此方案及所有版本数据？')">
                         <button type="submit" class="btn btn-sm btn-danger">删除</button>
                     </form>
                 </td>
@@ -103,22 +126,24 @@
 
 {% for s in schemes %}
 <div class="card" id="scheme-card-{{ s.id }}">
-    <h2>方案「{{ s.name }}」— {{ rule_labels.get(s.rule, s.rule) }}
+    <h2>方案「{{ s.name }}」V{{ s.version or 1 }} — {{ rule_labels.get(s.rule, s.rule) }}
         {% if s.status == 'draft' %}
         <span class="badge badge-draft">草稿</span>
         {% else %}
         <span class="badge badge-published">已发布</span>
         {% endif %}
     </h2>
+    {% if s.change_note %}<p style="color:var(--muted);font-size:0.88em;margin-bottom:8px">📝 {{ s.change_note }}</p>{% endif %}
     <div id="scheme-chart-{{ s.id }}" class="chart-container"></div>
+    <div id="scheme-coverage-{{ s.id }}"></div>
     <div id="scheme-table-{{ s.id }}"></div>
 </div>
 {% endfor %}
 
 <div class="card">
-    <h2>三种规则对比</h2>
+    <h2>三种规则对比（含灌溉覆盖率）</h2>
     <p style="color:var(--muted);font-size:0.88em;margin-bottom:12px">
-        对比均分、优先下游、按田亩比例三种分水规则下各支渠的水量分配
+        对比均分、优先下游、按田亩比例三种分水规则下各支渠的水量分配与灌溉覆盖效果
     </p>
     <div class="form-group" style="max-width:400px;margin-bottom:16px">
         <label>选择主渠</label>
@@ -128,8 +153,52 @@
             {% endfor %}
         </select>
     </div>
-    <div id="compareChart" class="chart-container" style="min-height:500px"></div>
+    <div id="compareChart" class="chart-container" style="min-height:450px"></div>
+    <div id="compareCoverageChart" class="chart-container" style="min-height:350px"></div>
     <div id="compareSummary"></div>
+</div>
+
+<div class="modal-overlay" id="newVersionModal">
+    <div class="modal">
+        <h2>创建新版本</h2>
+        <p style="color:var(--muted);margin-bottom:16px">将基于当前方案创建新版本，可继承计算结果并调整规则。</p>
+        <form method="post" id="newVersionForm" action="">
+            <div class="form-group">
+                <label>方案名称</label>
+                <input type="text" name="name" id="nv_name" required>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>分水规则</label>
+                    <select name="rule" id="nv_rule">
+                        <option value="equal">均分</option>
+                        <option value="downstream_first">优先下游</option>
+                        <option value="acreage_ratio">按田亩比例</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>变更说明</label>
+                <input type="text" name="change_note" id="nv_note" required placeholder="说明此版本的修改内容">
+            </div>
+            <div class="action-bar" style="margin-top:16px">
+                <button type="submit" class="btn btn-primary">✅ 创建新版本</button>
+                <button type="button" class="btn btn-outline" onclick="closeModal('newVersionModal')">取消</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="modal-overlay" id="checkModal">
+    <div class="modal">
+        <h2>发布前一致性校验</h2>
+        <p style="color:var(--muted);margin-bottom:12px" id="checkStatusText">正在校验方案...</p>
+        <div class="progress-bar"><div class="fill" id="checkProgress"></div></div>
+        <div id="checkResults"></div>
+        <div class="action-bar" style="margin-top:16px">
+            <button type="button" class="btn btn-outline" onclick="closeModal('checkModal')">关闭</button>
+        </div>
+    </div>
 </div>
 
 {% endif %}
@@ -138,20 +207,42 @@
 {% block scripts %}
 {% if main_canals and water_levels %}
 <script>
-const RULE_COLORS = {
-    equal: '#2980b9',
-    downstream_first: '#e67e22',
-    acreage_ratio: '#27ae60'
-};
-const RULE_LABELS = {
-    equal: '均分',
-    downstream_first: '优先下游',
-    acreage_ratio: '按田亩比例'
-};
-const BRANCH_COLORS = [
-    '#2980b9', '#e67e22', '#27ae60', '#8e44ad',
-    '#c0392b', '#16a085', '#d35400', '#2c3e50'
-];
+const RULE_COLORS = { equal: '#2980b9', downstream_first: '#e67e22', acreage_ratio: '#27ae60' };
+const RULE_LABELS = { equal: '均分', downstream_first: '优先下游', acreage_ratio: '按田亩比例' };
+const BRANCH_COLORS = ['#2980b9','#e67e22','#27ae60','#8e44ad','#c0392b','#16a085','#d35400','#2c3e50'];
+
+function openNewVersionModal(id, name, rule) {
+    document.getElementById('newVersionForm').action = '/schemes/' + id + '/new-version';
+    document.getElementById('nv_name').value = name + ' (修订版)';
+    document.getElementById('nv_rule').value = rule;
+    document.getElementById('nv_note').value = '';
+    document.getElementById('newVersionModal').classList.add('show');
+}
+function closeModal(modalId) { document.getElementById(modalId).classList.remove('show'); }
+
+function runConsistencyCheck(schemeId) {
+    const modal = document.getElementById('checkModal');
+    modal.classList.add('show');
+    document.getElementById('checkStatusText').textContent = '正在进行 6 项一致性校验...';
+    document.getElementById('checkProgress').style.width = '20%';
+    document.getElementById('checkResults').innerHTML = '';
+    fetch('/schemes/' + schemeId + '/consistency-check')
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById('checkProgress').style.width = '100%';
+            setTimeout(() => {
+                document.getElementById('checkStatusText').textContent =
+                    data.all_passed ? '✅ 全部校验通过！可以安全发布' : ('⚠️ ' + data.summary);
+                let html = '';
+                data.checks.forEach(c => {
+                    const cls = c.passed ? 'passed' : 'failed';
+                    const icon = c.passed ? '✅' : '❌';
+                    html += '<div class="check-row ' + cls + '"><span style="font-size:1.2em">' + icon + '</span><div style="flex:1"><div style="font-weight:600">' + c.check_type + '</div><div style="font-size:0.85em;color:var(--muted)">' + c.detail + '</div></div></div>';
+                });
+                document.getElementById('checkResults').innerHTML = html;
+            }, 400);
+        });
+}
 
 {% for s in schemes %}
 (function(){
@@ -187,18 +278,36 @@ const BRANCH_COLORS = [
             };
             Plotly.newPlot('scheme-chart-' + schemeId, traces, layout, {responsive: true});
 
-            var html = '<table><thead><tr><th>日期</th>';
-            data.branches.forEach(function(br){ html += '<th>' + br.name + '</th>'; });
-            html += '<th>合计</th></tr></thead><tbody>';
+            var covHtml = '<h3 style="margin-top:12px">灌溉覆盖率统计</h3><table><thead><tr><th>支渠</th><th>平均水量(m³/s)</th><th>平均覆盖率</th><th>评价</th></tr></thead><tbody>';
+            var totalC = 0, cnt = 0;
+            data.branches.forEach(function(br){
+                var fs = data.flows[br.id] || [];
+                var cs = data.coverages[br.id] || [];
+                var af = fs.length ? fs.reduce(function(a,b){return a+b;},0)/fs.length : 0;
+                var ac = cs.length ? cs.reduce(function(a,b){return a+b;},0)/cs.length : 0;
+                totalC += ac; cnt++;
+                var cls = ac >= 0.7 ? 'badge-published' : (ac >= 0.4 ? 'badge-draft' : '');
+                var evalT = ac >= 0.8 ? '充足' : (ac >= 0.5 ? '基本满足' : (ac > 0 ? '不足' : '无供水'));
+                covHtml += '<tr><td>'+br.name+'</td><td style="font-family:monospace">'+af.toFixed(3)+'</td><td><span class="badge '+cls+'">'+(ac*100).toFixed(1)+'%</span></td><td>'+evalT+'</td></tr>';
+            });
+            var oac = cnt ? totalC/cnt : 0;
+            covHtml += '<tr style="background:#f0ead8;font-weight:700"><td>总体</td><td>-</td><td colspan="2">平均覆盖率 ' + (oac*100).toFixed(1) + '% ' + (oac>=0.7?'✅达标':'⚠️待优化') + '</td></tr>';
+            covHtml += '</tbody></table>';
+            document.getElementById('scheme-coverage-' + schemeId).innerHTML = covHtml;
+
+            var html = '<h3 style="margin-top:12px">逐日明细</h3><table><thead><tr><th>日期</th>';
+            data.branches.forEach(function(br){ html += '<th colspan="2">' + br.name + '</th>'; });
+            html += '</tr><tr><th></th>';
+            data.branches.forEach(function(){ html += '<th>水量</th><th>覆盖%</th>'; });
+            html += '</tr></thead><tbody>';
             data.dates.forEach(function(d, di){
                 html += '<tr><td>' + d + '</td>';
-                var total = 0;
                 data.branches.forEach(function(br){
                     var v = data.flows[br.id][di];
-                    total += v;
-                    html += '<td>' + v.toFixed(4) + '</td>';
+                    var c = data.coverages[br.id][di] || 0;
+                    html += '<td style="font-family:monospace">' + v.toFixed(4) + '</td><td>' + (c*100).toFixed(0) + '%</td>';
                 });
-                html += '<td><strong>' + total.toFixed(4) + '</strong></td></tr>';
+                html += '</tr>';
             });
             html += '</tbody></table>';
             document.getElementById('scheme-table-' + schemeId).innerHTML = html;
@@ -220,95 +329,94 @@ function loadCompareChart(){
                 document.getElementById('compareSummary').innerHTML = '';
                 return;
             }
-            var traces = [];
-            data.rules.forEach(function(ruleData, ri){
-                ruleData.dates.forEach(function(date, di){
-                    var branchIds = Object.keys(ruleData.branches);
-                    branchIds.forEach(function(bid, bi){
-                        traces.push({
-                            x: [date],
-                            y: [ruleData.branches[bid].flows[di]],
-                            type: 'bar',
-                            name: RULE_LABELS[ruleData.rule] + ' - ' + ruleData.branches[bid].name,
-                            marker: {
-                                color: RULE_COLORS[ruleData.rule],
-                                opacity: 0.5 + bi * 0.15
-                            },
-                            legendgroup: RULE_LABELS[ruleData.rule],
-                            showlegend: di === 0
-                        });
-                    });
-                });
-            });
-            if (traces.length === 0) {
-                document.getElementById('compareChart').innerHTML =
-                    '<div class="empty-state"><p>无计算结果</p></div>';
-                return;
-            }
             var allDates = [];
             var allBranches = data.branch_canals || [];
             data.rules.forEach(function(rd){
-                rd.dates.forEach(function(d){
-                    if (allDates.indexOf(d) === -1) allDates.push(d);
-                });
+                rd.dates.forEach(function(d){ if (allDates.indexOf(d) === -1) allDates.push(d); });
             });
             allDates.sort();
 
-            var barTraces = [];
+            var flowTraces = [];
+            var covTraces = [];
             var ruleKeys = ['equal', 'downstream_first', 'acreage_ratio'];
             ruleKeys.forEach(function(rk){
                 var rd = data.rules.find(function(r){ return r.rule === rk; });
                 if (!rd) return;
                 Object.keys(rd.branches).forEach(function(bid, bi){
-                    var xArr = [];
-                    var yArr = [];
+                    var xArr = [], yF = [], yC = [];
                     allDates.forEach(function(d){
                         var di = rd.dates.indexOf(d);
                         xArr.push(d);
-                        yArr.push(di >= 0 ? rd.branches[bid].flows[di] : 0);
+                        yF.push(di >= 0 ? rd.branches[bid].flows[di] : 0);
+                        yC.push(di >= 0 ? ((rd.branches[bid].coverages[di]||0)*100) : null);
                     });
-                    barTraces.push({
-                        x: xArr,
-                        y: yArr,
-                        type: 'scatter',
-                        mode: 'lines+markers',
+                    var dash = rk === 'equal' ? 'solid' : (rk === 'downstream_first' ? 'dash' : 'dot');
+                    flowTraces.push({
+                        x: xArr, y: yF, type: 'scatter', mode: 'lines+markers', connectgaps: true,
                         name: RULE_LABELS[rk] + ' - ' + rd.branches[bid].name,
-                        line: { color: BRANCH_COLORS[bi % BRANCH_COLORS.length], width: 2, dash: rk === 'equal' ? 'solid' : (rk === 'downstream_first' ? 'dash' : 'dot') },
-                        marker: { size: 5 },
-                        legendgroup: bid
+                        line: { color: BRANCH_COLORS[bi % BRANCH_COLORS.length], width: 2.5, dash: dash },
+                        marker: { size: 4 }, legendgroup: bid
+                    });
+                    covTraces.push({
+                        x: xArr, y: yC, type: 'scatter', mode: 'lines', connectgaps: true,
+                        name: RULE_LABELS[rk] + ' - ' + rd.branches[bid].name,
+                        line: { color: BRANCH_COLORS[bi % BRANCH_COLORS.length], width: 2, dash: dash },
+                        legendgroup: bid, showlegend: false
                     });
                 });
             });
 
             var layout = {
-                title: '三种规则分水对比',
+                title: '三种规则分水量对比（m³/s）',
                 xaxis: { title: '日期' },
-                yaxis: { title: '分水量(m³/s)', rangemode: 'tozero' },
+                yaxis: { title: '分水量', rangemode: 'tozero' },
                 margin: { t: 50, b: 80, l: 70, r: 20 },
-                paper_bgcolor: 'rgba(0,0,0,0)',
-                plot_bgcolor: 'rgba(0,0,0,0)',
-                legend: { orientation: 'h', y: -0.25 },
-                barmode: 'group'
+                paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+                legend: { orientation: 'h', y: -0.25, font: { size: 10 } }
             };
-            Plotly.newPlot('compareChart', barTraces, layout, {responsive: true});
+            var layoutC = {
+                title: '三种规则灌溉覆盖率对比（%）',
+                xaxis: { title: '日期' },
+                yaxis: { title: '覆盖率 %', rangemode: 'tozero', range: [0, 110] },
+                margin: { t: 50, b: 80, l: 70, r: 20 }, showlegend: false,
+                paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)'
+            };
+            Plotly.newPlot('compareChart', flowTraces, layout, {responsive: true});
+            Plotly.newPlot('compareCoverageChart', covTraces, layoutC, {responsive: true});
 
-            var sumHtml = '<h3 style="margin-top:16px">各规则平均分配水量</h3>';
-            sumHtml += '<table><thead><tr><th>支渠</th>';
+            var sumHtml = '<h3 style="margin-top:16px">综合对比表</h3><table><thead><tr><th>指标</th>';
+            ruleKeys.forEach(function(rk){ sumHtml += '<th>' + RULE_LABELS[rk] + '</th>'; });
+            sumHtml += '</tr></thead><tbody><tr><td>总水量(m³/s)</td>';
             ruleKeys.forEach(function(rk){
-                sumHtml += '<th>' + RULE_LABELS[rk] + '</th>';
+                var rd = data.rules.find(function(r){ return r.rule === rk; });
+                sumHtml += '<td style="font-family:monospace;font-weight:600">' + (rd ? rd.total_flow.toFixed(2) : '-') + '</td>';
             });
+            sumHtml += '</tr><tr><td>平均覆盖率</td>';
+            ruleKeys.forEach(function(rk){
+                var rd = data.rules.find(function(r){ return r.rule === rk; });
+                if (rd) {
+                    var c = rd.avg_coverage;
+                    var cls = c >= 0.7 ? 'color:var(--success)' : (c < 0.4 ? 'color:var(--danger)' : '');
+                    sumHtml += '<td style="font-weight:700;'+cls+'">' + (c*100).toFixed(1) + '%</td>';
+                } else sumHtml += '<td>-</td>';
+            });
+            sumHtml += '</tr></tbody></table>';
+
+            sumHtml += '<h3 style="margin-top:16px">各支渠平均分配水量 / 覆盖率</h3><table><thead><tr><th>支渠</th>';
+            ruleKeys.forEach(function(rk){ sumHtml += '<th>' + RULE_LABELS[rk] + '</th>'; });
             sumHtml += '</tr></thead><tbody>';
             (data.branch_canals || []).forEach(function(bc){
-                sumHtml += '<tr><td>' + bc.name + '</td>';
+                sumHtml += '<tr><td>' + bc.name + '<br><span style="font-size:0.78em;color:var(--muted)">' + (bc.acreage||0) + '亩 ' + (farm_type_labels ? farm_type_labels[bc.farm_type]||'' : '') + '</span></td>';
                 ruleKeys.forEach(function(rk){
                     var rd = data.rules.find(function(r){ return r.rule === rk; });
                     if (rd && rd.branches[bc.id]) {
-                        var flows = rd.branches[bc.id].flows;
-                        var avg = flows.reduce(function(a,b){ return a+b; }, 0) / flows.length;
-                        sumHtml += '<td>' + avg.toFixed(4) + '</td>';
-                    } else {
-                        sumHtml += '<td>-</td>';
-                    }
+                        var fs = rd.branches[bc.id].flows;
+                        var cs = rd.branches[bc.id].coverages || [];
+                        var avg = fs.reduce(function(a,b){ return a+b; }, 0) / fs.length;
+                        var ac = cs.length ? cs.reduce(function(a,b){return a+b;},0)/cs.length : 0;
+                        var covCls = ac >= 0.7 ? 'var(--success)' : (ac < 0.4 ? 'var(--danger)' : 'var(--fg)');
+                        sumHtml += '<td style="font-size:0.9em">流量:<b>'+avg.toFixed(3)+'</b><br>覆盖:<b style="color:'+covCls+'">'+(ac*100).toFixed(0)+'%</b></td>';
+                    } else sumHtml += '<td>-</td>';
                 });
                 sumHtml += '</tr>';
             });

@@ -8,7 +8,10 @@ from app.calc import (
     check_over_allocation,
     compute_distribution,
     filter_continuous_dates,
+    compute_coverage,
+    run_consistency_checks,
 )
+from app.models import FARM_TYPE_LABELS
 
 router = APIRouter()
 
@@ -34,6 +37,7 @@ def _build_branch_canals(db, main_canal_id):
             "name": bc["name"],
             "width": bc["width"],
             "acreage": bc["acreage"],
+            "farm_type": bc["farm_type"] or "general",
             "position": bc["position"],
             "gate_opening": avg_opening,
             "gate_name": gate_names,
@@ -53,6 +57,11 @@ def schemes_page(request: Request, weir_id: int):
     for mc in main_canals:
         branch_canals_map[mc["id"]] = _build_branch_canals(db, mc["id"])
     water_levels = db.execute("SELECT * FROM water_levels WHERE weir_id = ? ORDER BY date", (weir_id,)).fetchall()
+    scheme_versions = {}
+    for s in schemes:
+        if s["parent_id"]:
+            parent = db.execute("SELECT id, name, version FROM schemes WHERE id = ?", (s["parent_id"],)).fetchone()
+            scheme_versions[s["id"]] = parent
     db.close()
     return getattr(request.app.state, "templates", None).TemplateResponse(
         request, "schemes.html",
@@ -63,15 +72,52 @@ def schemes_page(request: Request, weir_id: int):
             "branch_canals_map": branch_canals_map,
             "water_levels": water_levels,
             "rule_labels": RULE_LABELS,
+            "farm_type_labels": FARM_TYPE_LABELS,
+            "scheme_versions": scheme_versions,
         },
     )
 
 @router.post("/weirs/{weir_id}/schemes")
-def create_scheme(weir_id: int, name: str = Form(...), rule: str = Form("equal")):
+def create_scheme(weir_id: int, name: str = Form(...), rule: str = Form("equal"), change_note: str = Form("")):
     if rule not in ("equal", "downstream_first", "acreage_ratio"):
         raise HTTPException(status_code=400, detail="无效的分水规则")
     db = get_db()
-    db.execute("INSERT INTO schemes (weir_id, name, rule, status) VALUES (?, ?, ?, 'draft')", (weir_id, name, rule))
+    db.execute(
+        "INSERT INTO schemes (weir_id, name, rule, status, version, change_note) VALUES (?, ?, ?, 'draft', 1, ?)",
+        (weir_id, name, rule, change_note),
+    )
+    db.commit()
+    db.close()
+    return RedirectResponse(url=f"/weirs/{weir_id}/schemes", status_code=303)
+
+@router.post("/schemes/{scheme_id}/new-version")
+def create_new_version(scheme_id: int, name: str = Form(...), rule: str = Form("equal"), change_note: str = Form("")):
+    if rule not in ("equal", "downstream_first", "acreage_ratio"):
+        raise HTTPException(status_code=400, detail="无效的分水规则")
+    db = get_db()
+    parent = db.execute("SELECT * FROM schemes WHERE id = ?", (scheme_id,)).fetchone()
+    if not parent:
+        db.close()
+        raise HTTPException(status_code=404, detail="父方案不存在")
+    weir_id = parent["weir_id"]
+    new_version = (parent["version"] or 1) + 1
+    cur = db.execute(
+        """INSERT INTO schemes
+           (weir_id, name, rule, status, version, parent_id, change_note, main_canal_id)
+           VALUES (?, ?, ?, 'draft', ?, ?, ?, ?)""",
+        (weir_id, name, rule, new_version, scheme_id, change_note, parent["main_canal_id"]),
+    )
+    new_scheme_id = cur.lastrowid
+    if parent["main_canal_id"]:
+        old_results = db.execute(
+            "SELECT * FROM scheme_results WHERE scheme_id = ?", (scheme_id,)
+        ).fetchall()
+        for r in old_results:
+            db.execute(
+                """INSERT INTO scheme_results (scheme_id, date, branch_canal_id, flow, coverage)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (new_scheme_id, r["date"], r["branch_canal_id"], r["flow"], r["coverage"] or 0),
+            )
     db.commit()
     db.close()
     return RedirectResponse(url=f"/weirs/{weir_id}/schemes", status_code=303)
@@ -114,8 +160,14 @@ def update_scheme_rule(scheme_id: int, rule: str = Form(...)):
                         for record in ts:
                             for br in record["branches"]:
                                 db.execute(
-                                    "INSERT INTO scheme_results (scheme_id, date, branch_canal_id, flow) VALUES (?, ?, ?, ?)",
-                                    (scheme_id, record["date"], br["branch_canal_id"], br["flow"]),
+                                    """INSERT INTO scheme_results
+                                       (scheme_id, date, branch_canal_id, flow, coverage)
+                                       VALUES (?, ?, ?, ?, ?)""",
+                                    (
+                                        scheme_id, record["date"],
+                                        br["branch_canal_id"], br["flow"],
+                                        br.get("coverage", 0),
+                                    ),
                                 )
     db.commit()
     db.close()
@@ -130,6 +182,7 @@ def delete_scheme(scheme_id: int):
         raise HTTPException(status_code=404, detail="方案不存在")
     weir_id = scheme["weir_id"]
     db.execute("DELETE FROM scheme_results WHERE scheme_id = ?", (scheme_id,))
+    db.execute("UPDATE schemes SET parent_id = NULL WHERE parent_id = ?", (scheme_id,))
     db.execute("DELETE FROM schemes WHERE id = ?", (scheme_id,))
     db.commit()
     db.close()
@@ -177,8 +230,14 @@ def compute_scheme(scheme_id: int, main_canal_id: int = Form(...)):
             )
         for br in record["branches"]:
             db.execute(
-                "INSERT INTO scheme_results (scheme_id, date, branch_canal_id, flow) VALUES (?, ?, ?, ?)",
-                (scheme_id, record["date"], br["branch_canal_id"], br["flow"]),
+                """INSERT INTO scheme_results
+                   (scheme_id, date, branch_canal_id, flow, coverage)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (
+                    scheme_id, record["date"],
+                    br["branch_canal_id"], br["flow"],
+                    br.get("coverage", 0),
+                ),
             )
     db.execute("UPDATE schemes SET status = 'draft', main_canal_id = ? WHERE id = ?", (main_canal_id, scheme_id,))
     db.commit()
@@ -204,17 +263,50 @@ def publish_scheme(scheme_id: int):
     if not mc:
         db.close()
         raise HTTPException(status_code=400, detail="主渠不存在，请重新计算方案")
-    dates = list(set(r["date"] for r in results))
+    branch_canals = _build_branch_canals(db, scheme["main_canal_id"])
+    water_levels = db.execute("SELECT * FROM water_levels WHERE weir_id = ? ORDER BY date", (weir_id,)).fetchall()
+
+    ts_results = []
+    dates = sorted(list({r["date"] for r in results}))
     for d in dates:
-        date_results = [r for r in results if r["date"] == d]
-        wl = db.execute("SELECT * FROM water_levels WHERE weir_id = ? AND date = ?", (weir_id, d)).fetchone()
-        if not wl:
-            continue
-        total_flow = compute_main_canal_flow(wl["level"], mc["width"])
-        total_allocated = sum(r["flow"] for r in date_results)
-        if total_allocated > total_flow:
-            db.close()
-            raise HTTPException(status_code=400, detail=f"日期 {d} 存在超配水量（分配{total_allocated:.2f} > 来水{total_flow:.2f}），不能发布方案")
+        day_results = [r for r in results if r["date"] == d]
+        branches = []
+        for r in day_results:
+            bc = next((b for b in branch_canals if b["id"] == r["branch_canal_id"]), None)
+            branches.append({
+                "branch_canal_id": r["branch_canal_id"],
+                "name": bc["name"] if bc else f"支渠{r['branch_canal_id']}",
+                "flow": r["flow"],
+                "coverage": r["coverage"] or 0,
+            })
+        wl = next((w for w in water_levels if w["date"] == d), None)
+        total_flow = compute_main_canal_flow(wl["level"], mc["width"]) if wl else 0
+        ts_results.append({
+            "date": d,
+            "branches": branches,
+            "over_allocated": check_over_allocation(total_flow, branches),
+        })
+    wl_dicts = [{"date": wl["date"], "level": wl["level"]} for wl in water_levels]
+    checks = run_consistency_checks(
+        scheme_id, weir_id, scheme["main_canal_id"],
+        ts_results, wl_dicts, branch_canals,
+    )
+    all_passed = all(c["passed"] for c in checks)
+    if not all_passed:
+        failed = [c["detail"] for c in checks if not c["passed"]]
+        db.close()
+        raise HTTPException(
+            status_code=400,
+            detail="发布前一致性校验未通过：" + "；".join(failed),
+        )
+    db.execute("DELETE FROM consistency_checks WHERE target_type = 'scheme' AND target_id = ?", (scheme_id,))
+    for c in checks:
+        db.execute(
+            """INSERT INTO consistency_checks
+               (target_type, target_id, check_type, passed, detail)
+               VALUES ('scheme', ?, ?, ?, ?)""",
+            (scheme_id, c["check_type"], 1 if c["passed"] else 0, c["detail"]),
+        )
     db.execute("UPDATE schemes SET status = 'published' WHERE id = ?", (scheme_id,))
     db.commit()
     db.close()
@@ -226,12 +318,12 @@ def scheme_chart_data(scheme_id: int):
     scheme = db.execute("SELECT * FROM schemes WHERE id = ?", (scheme_id,)).fetchone()
     if not scheme:
         db.close()
-        raise HTTPException(status_code=404, detail="方案不存在")
+        return {"dates": [], "branches": [], "flows": {}, "coverages": {}}
     weir_id = scheme["weir_id"]
     results = db.execute("SELECT * FROM scheme_results WHERE scheme_id = ?", (scheme_id,)).fetchall()
     if not results:
         db.close()
-        return {"dates": [], "branches": [], "flows": {}}
+        return {"dates": [], "branches": [], "flows": {}, "coverages": {}}
     dates = sorted(list(set(r["date"] for r in results)))
     branch_ids = sorted(list(set(r["branch_canal_id"] for r in results)))
     branch_names = {}
@@ -239,16 +331,20 @@ def scheme_chart_data(scheme_id: int):
         bc = db.execute("SELECT * FROM branch_canals WHERE id = ?", (bid,)).fetchone()
         branch_names[bid] = bc["name"] if bc else f"支渠{bid}"
     flows = {}
+    coverages = {}
     for bid in branch_ids:
         flows[bid] = []
+        coverages[bid] = []
         for d in dates:
             r = next((r for r in results if r["date"] == d and r["branch_canal_id"] == bid), None)
             flows[bid].append(round(r["flow"], 4) if r else 0.0)
+            coverages[bid].append(round(r["coverage"], 4) if r and r["coverage"] else 0.0)
     db.close()
     return {
         "dates": dates,
         "branches": [{"id": bid, "name": branch_names[bid]} for bid in branch_ids],
         "flows": flows,
+        "coverages": coverages,
     }
 
 @router.get("/weirs/{weir_id}/compare-chart-data")
@@ -277,14 +373,84 @@ def compare_chart_data(weir_id: int, main_canal_id: int):
     rules_data = []
     for rule_key, rule_label in RULE_LABELS.items():
         ts = compute_time_series(wl_data, mc["width"], branch_canals, rule_key)
-        rule_result = {"rule": rule_key, "label": rule_label, "dates": [], "branches": {}}
+        rule_result = {
+            "rule": rule_key, "label": rule_label,
+            "dates": [], "branches": {},
+            "total_flow": 0.0, "avg_coverage": 0.0,
+        }
         for bc in branch_canals:
-            rule_result["branches"][bc["id"]] = {"name": bc["name"], "flows": []}
+            rule_result["branches"][bc["id"]] = {
+                "name": bc["name"], "flows": [], "coverages": [],
+            }
+        cov_sum = 0.0
+        cov_count = 0
         for record in ts:
             rule_result["dates"].append(record["date"])
+            rule_result["total_flow"] += record["total_flow"]
             for br in record["branches"]:
                 if br["branch_canal_id"] in rule_result["branches"]:
                     rule_result["branches"][br["branch_canal_id"]]["flows"].append(round(br["flow"], 4))
+                    cov = br.get("coverage", 0)
+                    rule_result["branches"][br["branch_canal_id"]]["coverages"].append(round(cov, 4))
+                    cov_sum += cov
+                    cov_count += 1
+        rule_result["total_flow"] = round(rule_result["total_flow"], 4)
+        rule_result["avg_coverage"] = round(cov_sum / cov_count, 4) if cov_count > 0 else 0.0
         rules_data.append(rule_result)
     db.close()
-    return {"rules": rules_data, "branch_canals": [{"id": bc["id"], "name": bc["name"]} for bc in branch_canals]}
+    return {
+        "rules": rules_data,
+        "branch_canals": [
+            {"id": bc["id"], "name": bc["name"],
+             "farm_type": bc["farm_type"], "acreage": bc["acreage"]}
+            for bc in branch_canals
+        ],
+    }
+
+@router.get("/schemes/{scheme_id}/consistency-check")
+def consistency_check(scheme_id: int):
+    db = get_db()
+    scheme = db.execute("SELECT * FROM schemes WHERE id = ?", (scheme_id,)).fetchone()
+    if not scheme:
+        db.close()
+        return {"all_passed": False, "summary": "方案不存在", "checks": []}
+    weir_id = scheme["weir_id"]
+    results = db.execute("SELECT * FROM scheme_results WHERE scheme_id = ?", (scheme_id,)).fetchall()
+    if not results or not scheme["main_canal_id"]:
+        db.close()
+        return {"all_passed": False, "summary": "方案尚未计算", "checks": [
+            {"check_type": "方案完整性", "passed": False, "detail": "请先选择主渠并计算方案"}
+        ]}
+    mc = db.execute("SELECT * FROM main_canals WHERE id = ?", (scheme["main_canal_id"],)).fetchone()
+    branch_canals = _build_branch_canals(db, scheme["main_canal_id"])
+    water_levels = db.execute("SELECT * FROM water_levels WHERE weir_id = ? ORDER BY date", (weir_id,)).fetchall()
+
+    ts_results = []
+    dates = sorted(list({r["date"] for r in results}))
+    for d in dates:
+        day_results = [r for r in results if r["date"] == d]
+        branches = []
+        for r in day_results:
+            bc = next((b for b in branch_canals if b["id"] == r["branch_canal_id"]), None)
+            branches.append({
+                "branch_canal_id": r["branch_canal_id"],
+                "name": bc["name"] if bc else f"支渠{r['branch_canal_id']}",
+                "flow": r["flow"],
+                "coverage": r["coverage"] or 0,
+            })
+        wl = next((w for w in water_levels if w["date"] == d), None)
+        total_flow = compute_main_canal_flow(wl["level"], mc["width"]) if wl else 0
+        ts_results.append({
+            "date": d, "branches": branches,
+            "over_allocated": check_over_allocation(total_flow, branches),
+        })
+    wl_dicts = [{"date": wl["date"], "level": wl["level"]} for wl in water_levels]
+    checks = run_consistency_checks(
+        scheme_id, weir_id, scheme["main_canal_id"],
+        ts_results, wl_dicts, branch_canals,
+    )
+    all_passed = all(c["passed"] for c in checks)
+    failed = [c for c in checks if not c["passed"]]
+    summary = f"共{len(checks)}项检查，通过{len(checks)-len(failed)}项，失败{len(failed)}项" if failed else "全部通过"
+    db.close()
+    return {"all_passed": all_passed, "summary": summary, "checks": checks}

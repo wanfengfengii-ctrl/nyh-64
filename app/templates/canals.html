@@ -7,6 +7,7 @@
     <a href="/weirs" class="btn btn-sm btn-outline">返回堰坝列表</a>
     <a href="/weirs/{{ weir.id }}/waterlevels" class="btn btn-sm btn-primary">水位录入</a>
     <a href="/weirs/{{ weir.id }}/schemes" class="btn btn-sm btn-success">分水分析</a>
+    <a href="/weirs/{{ weir.id }}/scenarios" class="btn btn-sm btn-info">🎯 历史规则推演</a>
 </p>
 
 <div class="card">
@@ -67,17 +68,21 @@
     <h2>主渠「{{ mc.name }}」— 支渠列表</h2>
     {% if branch_canals.get(mc.id) %}
     <table>
-        <thead><tr><th>名称</th><th>宽度(m)</th><th>田亩(亩)</th><th>位置序号</th><th>说明</th><th>操作</th></tr></thead>
+        <thead><tr><th>名称</th><th>宽度(m)</th><th>田亩(亩)</th><th>农田类型</th><th>位置序号</th><th>说明</th><th>操作</th></tr></thead>
         <tbody>
             {% for bc in branch_canals[mc.id] %}
             <tr>
                 <td>{{ bc.name }}</td>
                 <td>{{ bc.width }}</td>
                 <td>{{ bc.acreage }}</td>
+                <td>
+                    {% set ftypes = {'general':'通用','paddy':'水田','dryland':'旱地','vegetable':'菜地','orchard':'果园'} %}
+                    <span class="badge badge-draft">{{ ftypes.get(bc.farm_type or 'general', bc.farm_type or '通用') }}</span>
+                </td>
                 <td>{{ bc.position }}</td>
                 <td>{{ bc.description or '-' }}</td>
                 <td>
-                    <button type="button" class="btn btn-sm btn-outline" onclick="toggleEditBranchCanal({{ bc.id }}, '{{ bc.name }}', {{ bc.width }}, {{ bc.acreage }}, {{ bc.position }}, '{{ bc.description }}')">编辑</button>
+                    <button type="button" class="btn btn-sm btn-outline" onclick="toggleEditBranchCanal({{ bc.id }}, '{{ bc.name }}', {{ bc.width }}, {{ bc.acreage }}, '{{ bc.farm_type or 'general' }}', {{ bc.position }}, '{{ bc.description }}')">编辑</button>
                     <form method="post" action="/branch-canals/{{ bc.id }}/delete" style="display:inline" onsubmit="return confirm('删除支渠将同时删除其闸口，确认？')">
                         <button type="submit" class="btn btn-sm btn-danger">删除</button>
                     </form>
@@ -96,6 +101,15 @@
             <div class="form-group"><label>名称</label><input type="text" name="name" required></div>
             <div class="form-group"><label>宽度(m)</label><input type="number" name="width" step="0.1" min="0" value="0.5" required></div>
             <div class="form-group"><label>田亩(亩)</label><input type="number" name="acreage" step="0.1" min="0" value="0" required></div>
+            <div class="form-group"><label>农田类型</label>
+                <select name="farm_type">
+                    <option value="general">通用</option>
+                    <option value="paddy">水田</option>
+                    <option value="dryland">旱地</option>
+                    <option value="vegetable">菜地</option>
+                    <option value="orchard">果园</option>
+                </select>
+            </div>
             <div class="form-group"><label>位置序号</label><input type="number" name="position" min="0" value="0" required></div>
             <div class="form-group"><label>说明</label><input type="text" name="description"></div>
         </div>
@@ -140,14 +154,29 @@
 {% endfor %}
 
 <div id="editBranchCanalModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.4);z-index:999">
-    <div class="card" style="max-width:500px;margin:80px auto;padding:30px">
+    <div class="card" style="max-width:560px;margin:80px auto;padding:30px">
         <h3>编辑支渠</h3>
         <form method="post" id="editBranchCanalForm" action="">
-            <div class="form-group"><label>名称</label><input type="text" name="name" id="ebc_name" required></div>
-            <div class="form-group"><label>宽度(m)</label><input type="number" name="width" id="ebc_width" step="0.1" min="0" required></div>
-            <div class="form-group"><label>田亩(亩)</label><input type="number" name="acreage" id="ebc_acreage" step="0.1" min="0" required></div>
-            <div class="form-group"><label>位置序号</label><input type="number" name="position" id="ebc_position" min="0" required></div>
-            <div class="form-group"><label>说明</label><input type="text" name="description" id="ebc_desc"></div>
+            <div class="form-row">
+                <div class="form-group"><label>名称</label><input type="text" name="name" id="ebc_name" required></div>
+                <div class="form-group"><label>宽度(m)</label><input type="number" name="width" id="ebc_width" step="0.1" min="0" required></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>田亩(亩)</label><input type="number" name="acreage" id="ebc_acreage" step="0.1" min="0" required></div>
+                <div class="form-group"><label>农田类型</label>
+                    <select name="farm_type" id="ebc_farm_type">
+                        <option value="general">通用</option>
+                        <option value="paddy">水田</option>
+                        <option value="dryland">旱地</option>
+                        <option value="vegetable">菜地</option>
+                        <option value="orchard">果园</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>位置序号</label><input type="number" name="position" id="ebc_position" min="0" required></div>
+                <div class="form-group"><label>说明</label><input type="text" name="description" id="ebc_desc"></div>
+            </div>
             <div class="action-bar">
                 <button type="submit" class="btn btn-primary">保存</button>
                 <button type="button" class="btn btn-outline" onclick="document.getElementById('editBranchCanalModal').style.display='none'">取消</button>
@@ -181,11 +210,12 @@ function toggleEditMainCanal(id, name, width, desc) {
     document.getElementById('emc_desc').value = desc;
     document.getElementById('editMainCanalModal').style.display = 'block';
 }
-function toggleEditBranchCanal(id, name, width, acreage, position, desc) {
+function toggleEditBranchCanal(id, name, width, acreage, farmType, position, desc) {
     document.getElementById('editBranchCanalForm').action = '/branch-canals/' + id + '/edit';
     document.getElementById('ebc_name').value = name;
     document.getElementById('ebc_width').value = width;
     document.getElementById('ebc_acreage').value = acreage;
+    document.getElementById('ebc_farm_type').value = farmType || 'general';
     document.getElementById('ebc_position').value = position;
     document.getElementById('ebc_desc').value = desc;
     document.getElementById('editBranchCanalModal').style.display = 'block';
