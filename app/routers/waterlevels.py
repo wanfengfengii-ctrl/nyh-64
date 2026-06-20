@@ -1,3 +1,4 @@
+from datetime import datetime
 from fastapi import APIRouter, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from app.database import get_db
@@ -35,13 +36,28 @@ def create_waterlevel(weir_id: int, date: str = Form(...), level: float = Form(.
 @router.post("/weirs/{weir_id}/waterlevels/batch")
 def batch_create_waterlevels(weir_id: int, dates: str = Form(...), levels: str = Form(...), is_simulated: str = Form("off")):
     sim = 1 if is_simulated == "on" else 0
-    date_list = [d.strip() for d in dates.strip().split("\n") if d.strip()]
-    level_list = [float(l.strip()) for l in levels.strip().split("\n") if l.strip()]
-    if len(date_list) != len(level_list):
-        raise HTTPException(status_code=400, detail="日期与水位数量不匹配")
-    for l in level_list:
-        if l < 0:
-            raise HTTPException(status_code=400, detail="水位不能为负数")
+    date_lines = [d.strip() for d in dates.strip().split("\n") if d.strip()]
+    level_lines = [l.strip() for l in levels.strip().split("\n") if l.strip()]
+    if len(date_lines) != len(level_lines):
+        raise HTTPException(
+            status_code=400,
+            detail=f"日期行数({len(date_lines)}行)与水位行数({len(level_lines)}行)不匹配，请检查"
+        )
+    date_list = []
+    level_list = []
+    for i, (d, l) in enumerate(zip(date_lines, level_lines), 1):
+        try:
+            dt = datetime.strptime(d, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"第{i}行日期格式错误：{d}，请使用 YYYY-MM-DD 格式")
+        try:
+            lv = float(l)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"第{i}行水位值错误：{l}，请填写数字")
+        if lv < 0:
+            raise HTTPException(status_code=400, detail=f"第{i}行水位不能为负数：{l}")
+        date_list.append(dt.strftime("%Y-%m-%d"))
+        level_list.append(lv)
     db = get_db()
     for d, l in zip(date_list, level_list):
         existing = db.execute("SELECT id FROM water_levels WHERE weir_id = ? AND date = ?", (weir_id, d)).fetchone()

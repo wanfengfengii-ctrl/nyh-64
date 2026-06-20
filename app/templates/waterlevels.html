@@ -79,7 +79,7 @@
 {% if levels %}
 <script>
 (function(){
-    const dates = [{% for l in levels %}'{{ l.date }}'{% if not loop.last %},{% endif %}{% endfor %}];
+    const dates = [{% for l in levels %}{{ l.date | tojson }}{% if not loop.last %},{% endif %}{% endfor %}];
     const levels = [{% for l in levels %}{{ l.level }}{% if not loop.last %},{% endif %}{% endfor %}];
     const colors = [{% for l in levels %}{% if l.is_simulated %}'rgba(184,134,11,0.7)'{% else %}'rgba(39,174,96,0.7)'{% endif %}{% if not loop.last %},{% endif %}{% endfor %}];
     const trace = {

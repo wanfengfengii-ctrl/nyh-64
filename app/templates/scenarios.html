@@ -121,7 +121,7 @@
                 <td>{% if sr.water_level_threshold %}{{ sr.water_level_threshold }}m{% else %}-{% endif %}</td>
                 <td style="max-width:200px;font-size:0.85em;color:var(--muted)">{{ sr.description or '-' }}</td>
                 <td>
-                    <button class="btn btn-sm btn-outline" onclick="editSeasonalRule({{ sr.id }}, '{{ sr.name }}', {{ sr.start_month }}, {{ sr.end_month }}, '{{ sr.rule }}', '{{ sr.priority_farm_type }}', {{ sr.priority_ratio or 1 }}, {{ sr.water_level_threshold or 0 }}, '{{ sr.description or '' }}')">编辑</button>
+                    <button class="btn btn-sm btn-outline" onclick='editSeasonalRule({{ sr.id }}, {{ sr.name | tojson }}, {{ sr.start_month }}, {{ sr.end_month }}, {{ sr.rule | tojson }}, {{ (sr.priority_farm_type or "") | tojson }}, {{ sr.priority_ratio or 1 }}, {{ sr.water_level_threshold or 0 }}, {{ (sr.description or "") | tojson }})'>编辑</button>
                     <form method="post" action="/seasonal-rules/{{ sr.id }}/delete" style="display:inline" onsubmit="return confirm('确认删除此季节规则？')">
                         <button type="submit" class="btn btn-sm btn-danger">删除</button>
                     </form>

@@ -185,8 +185,35 @@ def compute_main_canal_flow(water_level: float, main_canal_width: float) -> floa
 def filter_continuous_dates(dates: List[str]) -> List[str]:
     if not dates:
         return []
-    sorted_dates = sorted(dates)
-    return sorted_dates
+    sorted_dates = sorted(set(dates))
+    if len(sorted_dates) == 1:
+        return sorted_dates
+    segments = []
+    current_segment = [sorted_dates[0]]
+    try:
+        current_dt = datetime.strptime(sorted_dates[0], "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return sorted_dates
+    for i in range(1, len(sorted_dates)):
+        try:
+            dt = datetime.strptime(sorted_dates[i], "%Y-%m-%d")
+        except (ValueError, TypeError):
+            segments.append(current_segment)
+            current_segment = [sorted_dates[i]]
+            continue
+        expected = current_dt + timedelta(days=1)
+        if dt == expected:
+            current_segment.append(sorted_dates[i])
+            current_dt = dt
+        else:
+            segments.append(current_segment)
+            current_segment = [sorted_dates[i]]
+            current_dt = dt
+    segments.append(current_segment)
+    if not segments:
+        return sorted_dates
+    longest = max(segments, key=len)
+    return longest
 
 
 def get_month_from_date(date_str: str) -> int:

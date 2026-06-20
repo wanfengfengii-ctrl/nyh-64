@@ -22,7 +22,7 @@
                 <td>{{ mc.width }}</td>
                 <td>{{ mc.description or '-' }}</td>
                 <td>
-                    <button type="button" class="btn btn-sm btn-outline" onclick="toggleEditMainCanal({{ mc.id }}, '{{ mc.name }}', {{ mc.width }}, '{{ mc.description }}')">编辑</button>
+                    <button type="button" class="btn btn-sm btn-outline" onclick='toggleEditMainCanal({{ mc.id }}, {{ mc.name | tojson }}, {{ mc.width }}, {{ mc.description | tojson }})'>编辑</button>
                     <form method="post" action="/main-canals/{{ mc.id }}/delete" style="display:inline" onsubmit="return confirm('删除主渠将同时删除所有支渠和闸口，确认？')">
                         <button type="submit" class="btn btn-sm btn-danger">删除</button>
                     </form>
@@ -82,7 +82,7 @@
                 <td>{{ bc.position }}</td>
                 <td>{{ bc.description or '-' }}</td>
                 <td>
-                    <button type="button" class="btn btn-sm btn-outline" onclick="toggleEditBranchCanal({{ bc.id }}, '{{ bc.name }}', {{ bc.width }}, {{ bc.acreage }}, '{{ bc.farm_type or 'general' }}', {{ bc.position }}, '{{ bc.description }}')">编辑</button>
+                    <button type="button" class="btn btn-sm btn-outline" onclick='toggleEditBranchCanal({{ bc.id }}, {{ bc.name | tojson }}, {{ bc.width }}, {{ bc.acreage }}, {{ (bc.farm_type or "general") | tojson }}, {{ bc.position }}, {{ (bc.description or "") | tojson }})'>编辑</button>
                     <form method="post" action="/branch-canals/{{ bc.id }}/delete" style="display:inline" onsubmit="return confirm('删除支渠将同时删除其闸口，确认？')">
                         <button type="submit" class="btn btn-sm btn-danger">删除</button>
                     </form>
@@ -129,7 +129,7 @@
                     <td>{{ g.opening }}</td>
                     <td>{{ g.description or '-' }}</td>
                     <td>
-                        <button type="button" class="btn btn-sm btn-outline" onclick="toggleEditGate({{ g.id }}, '{{ g.name }}', {{ g.opening }}, '{{ g.description }}')">编辑</button>
+                        <button type="button" class="btn btn-sm btn-outline" onclick='toggleEditGate({{ g.id }}, {{ g.name | tojson }}, {{ g.opening }}, {{ (g.description or "") | tojson }})'>编辑</button>
                         <form method="post" action="/gates/{{ g.id }}/delete" style="display:inline" onsubmit="return confirm('确认删除闸口？')">
                             <button type="submit" class="btn btn-sm btn-danger">删除</button>
                         </form>

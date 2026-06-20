@@ -104,7 +104,7 @@
                         <button type="submit" class="btn btn-sm btn-info" onclick="return confirm('计算将覆盖已有结果，确认？')">计算</button>
                     </form>
                     {% endif %}
-                    <button type="button" class="btn btn-sm btn-outline" onclick="openNewVersionModal({{ s.id }}, '{{ s.name }}', '{{ s.rule }}')">📋 新版本</button>
+                    <button type="button" class="btn btn-sm btn-outline" onclick='openNewVersionModal({{ s.id }}, {{ s.name | tojson }}, {{ s.rule | tojson }})'>📋 新版本</button>
                     <button type="button" class="btn btn-sm btn-success" onclick="runConsistencyCheck({{ s.id }})">🔍 校验</button>
                     {% if s.status == 'draft' %}
                     <form method="post" action="/schemes/{{ s.id }}/publish" style="display:inline" onsubmit="return confirm('发布前将自动进行一致性校验，确认？')">
