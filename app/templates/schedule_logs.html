@@ -1,0 +1,901 @@
+{% extends "base.html" %}
+
+{% block title %}调度日志与事件回溯 - {{ weir.name }}{% endblock %}
+
+{% block nav_weirs %}class="active"{% endblock %}
+
+{% block content %}
+<div class="flash-messages">
+    {% if request.query_params.get('msg') %}
+    <div class="alert alert-success">{{ request.query_params.get('msg') }}</div>
+    {% endif %}
+</div>
+
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+        <div>
+            <h1 style="margin-bottom: 4px;">{{ weir.name }} - 调度日志与事件回溯</h1>
+            <p style="color: var(--muted);">记录分水调整历史，研究传统灌溉管理行为与规则演变</p>
+        </div>
+        <div class="action-bar">
+            <a href="/weirs/{{ weir.id }}" class="btn btn-sm btn-outline">返回堰坝详情</a>
+            <a href="/weirs/{{ weir.id }}/schedule-logs/new" class="btn btn-sm btn-primary">记录新调度</a>
+        </div>
+    </div>
+</div>
+
+<div class="tabs" id="mainTabs">
+    <button class="tab-btn active" data-tab="timeline">时间轴视图</button>
+    <button class="tab-btn" data-tab="list">日志列表</button>
+    <button class="tab-btn" data-tab="compare">决策对比</button>
+    <button class="tab-btn" data-tab="playback">历史回放</button>
+</div>
+
+<div id="tab-timeline" class="tab-content">
+    <div class="card">
+        <h2>筛选条件</h2>
+        <div class="form-row">
+            <div class="form-group">
+                <label>开始日期</label>
+                <input type="date" id="filterStartDate">
+            </div>
+            <div class="form-group">
+                <label>结束日期</label>
+                <input type="date" id="filterEndDate">
+            </div>
+            <div class="form-group">
+                <label>操作者</label>
+                <select id="filterOperator">
+                    <option value="">全部</option>
+                    {% for op in operator_list %}
+                    <option value="{{ op }}">{{ op }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group" style="align-self: flex-end;">
+                <button class="btn btn-primary" onclick="loadTimeline()">查询</button>
+                <button class="btn btn-outline" onclick="resetFilters()">重置</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>调度时间轴</h2>
+        <div id="timelineContainer" style="position: relative; min-height: 400px; padding-left: 20px;">
+            <div id="timelineEvents" style="border-left: 3px solid var(--border); padding-left: 20px;">
+                <div class="empty-state">
+                    <div class="icon">📅</div>
+                    <p>加载中...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>整体趋势</h2>
+        <div class="stat-row">
+            <div class="stat-card">
+                <div class="stat-value" id="statTotalEvents">0</div>
+                <div class="stat-label">总调度次数</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="statPublished">0</div>
+                <div class="stat-label">已发布执行</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="statAvgFlowChange">0%</div>
+                <div class="stat-label">平均流量变化</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="statAvgCoverageChange">0%</div>
+                <div class="stat-label">平均覆盖率变化</div>
+            </div>
+        </div>
+        <div id="trendChart" class="chart-container"></div>
+    </div>
+</div>
+
+<div id="tab-list" class="tab-content" style="display: none;">
+    <div class="card">
+        <h2>调度日志列表</h2>
+        {% if logs %}
+        <table>
+            <thead>
+                <tr>
+                    <th>时间</th>
+                    <th>操作者</th>
+                    <th>调整原因</th>
+                    <th>规则变更</th>
+                    <th>流量变化</th>
+                    <th>覆盖率变化</th>
+                    <th>状态</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in logs %}
+                <tr>
+                    <td>{{ log.adjust_time }}</td>
+                    <td>{{ log.operator }}</td>
+                    <td>{{ log.adjust_reason }}</td>
+                    <td>
+                        {{ rule_labels.get(log.rule_before, log.rule_before) }} →
+                        {{ rule_labels.get(log.rule_after, log.rule_after) }}
+                    </td>
+                    <td>
+                        {{ "%.4f"|format(log.total_flow_before) }} →
+                        {{ "%.4f"|format(log.total_flow_after) }}
+                        {% set flow_delta = log.total_flow_after - log.total_flow_before %}
+                        <span style="color: {% if flow_delta > 0 %}var(--success){% elif flow_delta < 0 %}var(--danger){% else %}var(--muted){% endif %};">
+                            ({{ "%+.4f"|format(flow_delta) }})
+                        </span>
+                    </td>
+                    <td>
+                        {{ "%.1f"|format(log.avg_coverage_before * 100) }}% →
+                        {{ "%.1f"|format(log.avg_coverage_after * 100) }}%
+                        {% set cov_delta = log.avg_coverage_after - log.avg_coverage_before %}
+                        <span style="color: {% if cov_delta > 0 %}var(--success){% elif cov_delta < 0 %}var(--danger){% else %}var(--muted){% endif %};">
+                            ({{ "%+.1f"|format(cov_delta * 100) }}%)
+                        </span>
+                    </td>
+                    <td>
+                        {% if log.published %}
+                        <span class="badge badge-published">已发布</span>
+                        {% else %}
+                        <span class="badge badge-draft">草稿</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="/weirs/{{ weir.id }}/schedule-logs/{{ log.id }}" class="btn btn-sm btn-outline">详情</a>
+                        <form method="post" action="/weirs/{{ weir.id }}/schedule-logs/{{ log.id }}/delete" style="display: inline;" onsubmit="return confirm('确定要删除这条日志吗？');">
+                            <button type="submit" class="btn btn-sm btn-danger">删除</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">
+            <div class="icon">📝</div>
+            <p>暂无调度日志</p>
+            <a href="/weirs/{{ weir.id }}/schedule-logs/new" class="btn btn-primary">记录第一条调度</a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<div id="tab-compare" class="tab-content" style="display: none;">
+    <div class="card">
+        <h2>决策对比分析</h2>
+        <p style="color: var(--muted); margin-bottom: 16px;">选择多个调度日志进行对比分析，研究不同决策的效果差异</p>
+
+        <div class="form-group">
+            <label>选择要对比的调度日志（可多选）</label>
+            <div id="compareCheckboxes" style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 12px;">
+                {% if logs %}
+                {% for log in logs %}
+                <label style="display: block; margin-bottom: 8px; cursor: pointer;">
+                    <input type="checkbox" class="compare-checkbox" value="{{ log.id }}" onchange="updateCompareButton()">
+                    <strong>{{ log.adjust_time }}</strong> - {{ log.operator }}: {{ log.adjust_reason }}
+                    {% if log.published %}
+                    <span class="badge badge-published" style="margin-left: 8px;">已发布</span>
+                    {% endif %}
+                </label>
+                {% endfor %}
+                {% else %}
+                <p style="color: var(--muted);">暂无日志可对比</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <button id="compareBtn" class="btn btn-primary" onclick="loadCompareData()" disabled>开始对比</button>
+    </div>
+
+    <div id="compareResults" style="display: none;">
+        <div class="card">
+            <h2>对比结果</h2>
+            <div id="compareSummary"></div>
+            <div id="compareChart" class="chart-container"></div>
+            <div id="compareTable"></div>
+        </div>
+    </div>
+</div>
+
+<div id="tab-playback" class="tab-content" style="display: none;">
+    <div class="card">
+        <h2>历史调度回放</h2>
+        <p style="color: var(--muted); margin-bottom: 16px;">按时间顺序回放历史调度过程，观察决策演变轨迹</p>
+
+        <div class="action-bar" style="margin-bottom: 16px;">
+            <button class="btn btn-sm btn-outline" onclick="playbackFirst()" id="btnFirst">⏮ 最早</button>
+            <button class="btn btn-sm btn-outline" onclick="playbackPrev()" id="btnPrev">◀ 上一条</button>
+            <button class="btn btn-sm btn-primary" onclick="togglePlayback()" id="btnPlay">▶ 自动播放</button>
+            <button class="btn btn-sm btn-outline" onclick="playbackNext()" id="btnNext">下一条 ▶</button>
+            <button class="btn btn-sm btn-outline" onclick="playbackLast()" id="btnLast">最新 ⏭</button>
+            <span style="align-self: center; margin-left: 16px; color: var(--muted);">
+                进度: <span id="playbackProgress">0 / 0</span>
+            </span>
+            <div style="align-self: center; margin-left: 16px;">
+                <label style="margin-right: 8px;">速度:</label>
+                <select id="playbackSpeed" onchange="updatePlaybackSpeed()">
+                    <option value="3000">慢 (3秒)</option>
+                    <option value="2000" selected>正常 (2秒)</option>
+                    <option value="1000">快 (1秒)</option>
+                    <option value="500">很快 (0.5秒)</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="progress-bar">
+            <div class="fill" id="playbackProgressBar" style="width: 0%"></div>
+        </div>
+
+        <div id="playbackContent">
+            <div class="empty-state">
+                <div class="icon">🎬</div>
+                <p>暂无回放数据</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="eventModal" class="modal-overlay">
+    <div class="modal">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+            <h2 id="modalTitle">调度详情</h2>
+            <button onclick="closeModal()" class="btn btn-sm btn-outline">✕</button>
+        </div>
+        <div id="modalContent"></div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const weirId = {{ weir.id }};
+const ruleLabels = {{ rule_labels | tojson }};
+let timelineEvents = [];
+let currentPlaybackIndex = -1;
+let playbackInterval = null;
+let playbackSpeed = 2000;
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
+        document.getElementById('tab-' + btn.dataset.tab).style.display = 'block';
+        if (btn.dataset.tab === 'timeline') {
+            loadTimeline();
+        } else if (btn.dataset.tab === 'playback') {
+            loadPlaybackData();
+        }
+    });
+});
+
+function loadTimeline() {
+    const startDate = document.getElementById('filterStartDate').value;
+    const endDate = document.getElementById('filterEndDate').value;
+    const operator = document.getElementById('filterOperator').value;
+
+    let url = `/api/weirs/${weirId}/schedule-logs/timeline`;
+    const params = new URLSearchParams();
+    if (startDate) params.append('start_date', startDate);
+    if (endDate) params.append('end_date', endDate);
+    if (operator) params.append('operator', operator);
+    if (params.toString()) url += '?' + params.toString();
+
+    fetch(url)
+        .then(r => r.json())
+        .then(data => {
+            timelineEvents = data.events;
+            renderTimeline();
+            renderTrendChart();
+            updateStats();
+        });
+}
+
+function renderTimeline() {
+    const container = document.getElementById('timelineEvents');
+    if (timelineEvents.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <div class="icon">📅</div>
+                <p>暂无调度记录</p>
+                <a href="/weirs/{{ weir.id }}/schedule-logs/new" class="btn btn-primary">记录第一条调度</a>
+            </div>
+        `;
+        return;
+    }
+
+    let html = '';
+    const colors = ['#b8860b', '#2980b9', '#27ae60', '#c0392b', '#8e44ad', '#d35400'];
+
+    timelineEvents.forEach((event, index) => {
+        const color = colors[index % colors.length];
+        const flowDelta = event.total_flow_after - event.total_flow_before;
+        const covDelta = event.avg_coverage_after - event.avg_coverage_before;
+        const gateCount = event.gate_changes.length;
+
+        html += `
+            <div style="position: relative; margin-bottom: 24px; padding: 16px; background: var(--card); border-radius: 8px; border: 1px solid var(--border); cursor: pointer;"
+                 onclick="showEventDetail(${event.id})">
+                <div style="position: absolute; left: -30px; top: 20px; width: 16px; height: 16px; border-radius: 50%; background: ${color}; border: 3px solid var(--bg);"></div>
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px;">
+                    <div>
+                        <div style="font-weight: 600; font-size: 1.05em; margin-bottom: 4px;">${event.adjust_time}</div>
+                        <div style="color: var(--muted); margin-bottom: 8px;">
+                            <strong>${event.operator}</strong> · ${event.adjust_reason}
+                            ${event.published ? '<span class="badge badge-published" style="margin-left: 8px;">已发布</span>' : '<span class="badge badge-draft" style="margin-left: 8px;">草稿</span>'}
+                        </div>
+                        <div style="font-size: 0.9em; color: var(--muted);">
+                            规则: ${event.rule_before || '-'} → ${event.rule_after || '-'} ·
+                            闸口调整: ${gateCount} 处
+                        </div>
+                    </div>
+                    <div style="text-align: right;">
+                        <div>
+                            流量: ${event.total_flow_before.toFixed(4)} → <strong>${event.total_flow_after.toFixed(4)}</strong>
+                            <span style="color: ${flowDelta >= 0 ? 'var(--success)' : 'var(--danger)'};">
+                                (${flowDelta >= 0 ? '+' : ''}${flowDelta.toFixed(4)})
+                            </span>
+                        </div>
+                        <div>
+                            覆盖率: ${(event.avg_coverage_before * 100).toFixed(1)}% → <strong>${(event.avg_coverage_after * 100).toFixed(1)}%</strong>
+                            <span style="color: ${covDelta >= 0 ? 'var(--success)' : 'var(--danger)'};">
+                                (${covDelta >= 0 ? '+' : ''}${(covDelta * 100).toFixed(1)}%)
+                            </span>
+                        </div>
+                        <div style="color: var(--muted); font-size: 0.85em; margin-top: 4px;">
+                            水位背景: ${event.water_level.toFixed(4)} (${event.water_level_date || '-'})
+                        </div>
+                    </div>
+                </div>
+                ${event.gate_changes.length > 0 ? `
+                <div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border);">
+                    <div style="font-size: 0.85em; color: var(--muted); margin-bottom: 6px;">闸口变更:</div>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                        ${event.gate_changes.map(gc => `
+                            <span class="badge" style="background: #f0ead8; color: var(--fg);">
+                                ${gc.branch_canal_name}/${gc.gate_name}:
+                                ${gc.opening_before}% → <strong>${gc.opening_after}%</strong>
+                            </span>
+                        `).join('')}
+                    </div>
+                </div>
+                ` : ''}
+            </div>
+        `;
+    });
+
+    container.innerHTML = html;
+}
+
+function showEventDetail(logId) {
+    fetch(`/api/weirs/${weirId}/schedule-logs/${logId}`)
+        .then(r => r.json())
+        .then(event => {
+            const flowDelta = event.total_flow_after - event.total_flow_before;
+            const covDelta = event.avg_coverage_after - event.avg_coverage_before;
+
+            let gateHtml = '';
+            if (event.gate_changes.length > 0) {
+                gateHtml = `
+                    <h3>闸口变更详情</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>支渠</th>
+                                <th>闸口</th>
+                                <th>开度前</th>
+                                <th>开度后</th>
+                                <th>流量前</th>
+                                <th>流量后</th>
+                                <th>覆盖率前</th>
+                                <th>覆盖率后</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${event.gate_changes.map(gc => `
+                                <tr>
+                                    <td>${gc.branch_canal_name}</td>
+                                    <td>${gc.gate_name}</td>
+                                    <td>${gc.opening_before}%</td>
+                                    <td>${gc.opening_after}%</td>
+                                    <td>${gc.flow_before.toFixed(4)}</td>
+                                    <td>${gc.flow_after.toFixed(4)}</td>
+                                    <td>${(gc.coverage_before * 100).toFixed(1)}%</td>
+                                    <td>${(gc.coverage_after * 100).toFixed(1)}%</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+            }
+
+            document.getElementById('modalTitle').textContent = `调度详情 - ${event.adjust_time}`;
+            document.getElementById('modalContent').innerHTML = `
+                <div class="stat-row">
+                    <div class="stat-card">
+                        <div class="stat-value">${event.total_flow_after.toFixed(4)}</div>
+                        <div class="stat-label">总流量
+                            <div style="color: ${flowDelta >= 0 ? 'var(--success)' : 'var(--danger)'}; font-size: 0.85em;">
+                                ${flowDelta >= 0 ? '↑' : '↓'} ${Math.abs(flowDelta).toFixed(4)}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${(event.avg_coverage_after * 100).toFixed(1)}%</div>
+                        <div class="stat-label">平均覆盖率
+                            <div style="color: ${covDelta >= 0 ? 'var(--success)' : 'var(--danger)'}; font-size: 0.85em;">
+                                ${covDelta >= 0 ? '↑' : '↓'} ${(Math.abs(covDelta) * 100).toFixed(1)}%
+                            </div>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${event.gate_changes.length}</div>
+                        <div class="stat-label">闸口调整数</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${event.water_level.toFixed(4)}</div>
+                        <div class="stat-label">当时水位</div>
+                    </div>
+                </div>
+
+                <table style="margin-bottom: 16px;">
+                    <tr><th style="width: 140px;">操作者</th><td>${event.operator}</td></tr>
+                    <tr><th>调整原因</th><td>${event.adjust_reason}</td></tr>
+                    <tr><th>水位日期</th><td>${event.water_level_date || '-'}</td></tr>
+                    <tr><th>规则变更</th><td>${event.rule_before || '-'} → ${event.rule_after || '-'}</td></tr>
+                    <tr><th>关联方案</th><td>${event.scheme_name || '-'}</td></tr>
+                    <tr><th>状态</th><td>${event.published ? '<span class="badge badge-published">已发布</span>' : '<span class="badge badge-draft">草稿</span>'}</td></tr>
+                    ${event.published_at ? `<tr><th>发布时间</th><td>${event.published_at}</td></tr>` : ''}
+                    ${event.notes ? `<tr><th>备注</th><td>${event.notes}</td></tr>` : ''}
+                </table>
+
+                ${gateHtml}
+
+                <div style="text-align: right; margin-top: 16px;">
+                    <a href="/weirs/${weirId}/schedule-logs/${event.id}" class="btn btn-primary">查看完整页面</a>
+                </div>
+            `;
+            document.getElementById('eventModal').classList.add('show');
+        });
+}
+
+function closeModal() {
+    document.getElementById('eventModal').classList.remove('show');
+}
+
+document.getElementById('eventModal').addEventListener('click', (e) => {
+    if (e.target.id === 'eventModal') closeModal();
+});
+
+function updateStats() {
+    const total = timelineEvents.length;
+    const published = timelineEvents.filter(e => e.published).length;
+    const flowChanges = timelineEvents.map(e => e.total_flow_after - e.total_flow_before);
+    const covChanges = timelineEvents.map(e => e.avg_coverage_after - e.avg_coverage_before);
+
+    const avgFlowChange = flowChanges.length > 0
+        ? (flowChanges.reduce((a, b) => a + b, 0) / flowChanges.length)
+        : 0;
+    const avgCovChange = covChanges.length > 0
+        ? (covChanges.reduce((a, b) => a + b, 0) / covChanges.length)
+        : 0;
+
+    document.getElementById('statTotalEvents').textContent = total;
+    document.getElementById('statPublished').textContent = published;
+    document.getElementById('statAvgFlowChange').textContent = (avgFlowChange >= 0 ? '+' : '') + avgFlowChange.toFixed(4);
+    document.getElementById('statAvgCoverageChange').textContent = (avgCovChange >= 0 ? '+' : '') + (avgCovChange * 100).toFixed(1) + '%';
+}
+
+function renderTrendChart() {
+    if (timelineEvents.length === 0) {
+        document.getElementById('trendChart').innerHTML = '<div class="empty-state"><p>暂无数据</p></div>';
+        return;
+    }
+
+    const dates = timelineEvents.map(e => e.adjust_time);
+    const flowsBefore = timelineEvents.map(e => e.total_flow_before);
+    const flowsAfter = timelineEvents.map(e => e.total_flow_after);
+    const covsBefore = timelineEvents.map(e => e.avg_coverage_before * 100);
+    const covsAfter = timelineEvents.map(e => e.avg_coverage_after * 100);
+
+    const traces = [
+        {
+            x: dates,
+            y: flowsBefore,
+            name: '调整前总流量',
+            type: 'scatter',
+            mode: 'lines+markers',
+            line: { color: '#95a5a6', dash: 'dash' },
+            yaxis: 'y'
+        },
+        {
+            x: dates,
+            y: flowsAfter,
+            name: '调整后总流量',
+            type: 'scatter',
+            mode: 'lines+markers',
+            line: { color: '#b8860b', width: 3 },
+            yaxis: 'y'
+        },
+        {
+            x: dates,
+            y: covsBefore,
+            name: '调整前覆盖率(%)',
+            type: 'scatter',
+            mode: 'lines+markers',
+            line: { color: '#95a5a6', dash: 'dot' },
+            yaxis: 'y2'
+        },
+        {
+            x: dates,
+            y: covsAfter,
+            name: '调整后覆盖率(%)',
+            type: 'scatter',
+            mode: 'lines+markers',
+            line: { color: '#27ae60', width: 3 },
+            yaxis: 'y2'
+        }
+    ];
+
+    const layout = {
+        title: '调度效果趋势',
+        grid: { rows: 1, columns: 1, pattern: 'independent' },
+        yaxis: { title: '总流量', side: 'left' },
+        yaxis2: { title: '覆盖率(%)', side: 'right', overlaying: 'y' },
+        legend: { orientation: 'h', y: -0.2 },
+        margin: { l: 60, r: 60, t: 50, b: 80 },
+        height: 400,
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)',
+        font: { family: 'inherit' }
+    };
+
+    Plotly.newPlot('trendChart', traces, layout, { responsive: true });
+}
+
+function resetFilters() {
+    document.getElementById('filterStartDate').value = '';
+    document.getElementById('filterEndDate').value = '';
+    document.getElementById('filterOperator').value = '';
+    loadTimeline();
+}
+
+function updateCompareButton() {
+    const checked = document.querySelectorAll('.compare-checkbox:checked');
+    document.getElementById('compareBtn').disabled = checked.length < 2;
+}
+
+function loadCompareData() {
+    const checked = Array.from(document.querySelectorAll('.compare-checkbox:checked')).map(c => c.value);
+    if (checked.length < 2) {
+        alert('请至少选择2条日志进行对比');
+        return;
+    }
+
+    fetch(`/api/weirs/${weirId}/schedule-logs/compare?log_ids=${checked.join(',')}`)
+        .then(r => r.json())
+        .then(data => {
+            renderCompareResults(data);
+        });
+}
+
+function renderCompareResults(data) {
+    document.getElementById('compareResults').style.display = 'block';
+
+    const comps = data.comparisons;
+    const branches = data.branches;
+    const labels = comps.map((c, i) => `调度${i + 1}: ${c.adjust_time.slice(5, 16)}`);
+
+    let summaryHtml = '<div class="stat-row">';
+    comps.forEach((c, i) => {
+        summaryHtml += `
+            <div class="stat-card">
+                <div class="stat-value" style="font-size: 1.2em;">${c.operator}</div>
+                <div class="stat-label">
+                    调度${i + 1}<br>
+                    <small>${c.adjust_reason}</small><br>
+                    ${c.published ? '<span class="badge badge-published">已发布</span>' : '<span class="badge badge-draft">草稿</span>'}
+                </div>
+            </div>
+        `;
+    });
+    summaryHtml += '</div>';
+    document.getElementById('compareSummary').innerHTML = summaryHtml;
+
+    const flowTraces = [
+        {
+            x: labels,
+            y: comps.map(c => c.total_flow_before),
+            name: '调整前总流量',
+            type: 'bar',
+            marker: { color: '#95a5a6' }
+        },
+        {
+            x: labels,
+            y: comps.map(c => c.total_flow_after),
+            name: '调整后总流量',
+            type: 'bar',
+            marker: { color: '#b8860b' }
+        }
+    ];
+
+    const covTraces = [
+        {
+            x: labels,
+            y: comps.map(c => c.avg_coverage_before * 100),
+            name: '调整前覆盖率(%)',
+            type: 'bar',
+            marker: { color: '#95a5a6' }
+        },
+        {
+            x: labels,
+            y: comps.map(c => c.avg_coverage_after * 100),
+            name: '调整后覆盖率(%)',
+            type: 'bar',
+            marker: { color: '#27ae60' }
+        }
+    ];
+
+    const layout = {
+        title: '各调度决策效果对比',
+        barmode: 'group',
+        grid: { rows: 2, columns: 1, pattern: 'independent' },
+        legend: { orientation: 'h', y: -0.15 },
+        height: 600,
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)',
+        font: { family: 'inherit' }
+    };
+
+    Plotly.newPlot('compareChart', [...flowTraces, ...covTraces], layout, { responsive: true });
+
+    let tableHtml = '<h3 style="margin-top: 24px;">支渠级详细对比</h3><table>';
+    tableHtml += '<thead><tr><th>支渠</th><th>指标</th>';
+    comps.forEach((c, i) => tableHtml += `<th>调度${i + 1}</th>`);
+    tableHtml += '</tr></thead><tbody>';
+
+    branches.forEach(b => {
+        tableHtml += `<tr><td rowspan="3" style="font-weight: 600;">${b.name}</td>`;
+        tableHtml += `<td>流量变化</td>`;
+        comps.forEach(c => {
+            const bd = c.branches[b.id];
+            if (bd) {
+                tableHtml += `<td>${bd.flow_before.toFixed(4)} → ${bd.flow_after.toFixed(4)} <span style="color: ${bd.flow_delta >= 0 ? 'var(--success)' : 'var(--danger)'};">(${bd.flow_delta >= 0 ? '+' : ''}${bd.flow_delta.toFixed(4)})</span></td>`;
+            } else {
+                tableHtml += `<td>-</td>`;
+            }
+        });
+        tableHtml += '</tr>';
+
+        tableHtml += `<tr><td>覆盖率变化</td>`;
+        comps.forEach(c => {
+            const bd = c.branches[b.id];
+            if (bd) {
+                tableHtml += `<td>${(bd.coverage_before * 100).toFixed(1)}% → ${(bd.coverage_after * 100).toFixed(1)}% <span style="color: ${bd.coverage_delta >= 0 ? 'var(--success)' : 'var(--danger)'};">(${bd.coverage_delta >= 0 ? '+' : ''}${(bd.coverage_delta * 100).toFixed(1)}%)</span></td>`;
+            } else {
+                tableHtml += `<td>-</td>`;
+            }
+        });
+        tableHtml += '</tr>';
+
+        tableHtml += `<tr><td>开度变化</td>`;
+        comps.forEach(c => {
+            const bd = c.branches[b.id];
+            if (bd) {
+                tableHtml += `<td>${bd.opening_before}% → ${bd.opening_after}%</td>`;
+            } else {
+                tableHtml += `<td>-</td>`;
+            }
+        });
+        tableHtml += '</tr>';
+    });
+
+    tableHtml += '</tbody></table>';
+    document.getElementById('compareTable').innerHTML = tableHtml;
+}
+
+function loadPlaybackData() {
+    if (timelineEvents.length === 0) {
+        loadTimeline().then(() => initPlayback());
+    } else {
+        initPlayback();
+    }
+}
+
+function initPlayback() {
+    if (timelineEvents.length === 0) return;
+    currentPlaybackIndex = 0;
+    updatePlaybackDisplay();
+    updatePlaybackControls();
+}
+
+function updatePlaybackDisplay() {
+    if (timelineEvents.length === 0 || currentPlaybackIndex < 0) return;
+
+    const event = timelineEvents[currentPlaybackIndex];
+    document.getElementById('playbackProgress').textContent = `${currentPlaybackIndex + 1} / ${timelineEvents.length}`;
+    document.getElementById('playbackProgressBar').style.width = `${((currentPlaybackIndex + 1) / timelineEvents.length) * 100}%`;
+
+    const flowDelta = event.total_flow_after - event.total_flow_before;
+    const covDelta = event.avg_coverage_after - event.avg_coverage_before;
+
+    let html = `
+        <div class="card" style="background: linear-gradient(135deg, #fffdf5 0%, #f5f0e8 100%);">
+            <div style="text-align: center; margin-bottom: 16px;">
+                <div style="font-size: 1.8em; font-weight: 700; color: var(--accent);">${event.adjust_time}</div>
+                <div style="color: var(--muted); margin-top: 4px;">第 ${currentPlaybackIndex + 1} 次调度 · 共 ${timelineEvents.length} 次</div>
+            </div>
+
+            <div class="stat-row">
+                <div class="stat-card">
+                    <div class="stat-value">${event.operator}</div>
+                    <div class="stat-label">操作者</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${event.water_level.toFixed(4)}</div>
+                    <div class="stat-label">当时水位</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" style="color: ${flowDelta >= 0 ? 'var(--success)' : 'var(--danger)'};">
+                        ${flowDelta >= 0 ? '↑' : '↓'} ${Math.abs(flowDelta).toFixed(4)}
+                    </div>
+                    <div class="stat-label">流量变化</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" style="color: ${covDelta >= 0 ? 'var(--success)' : 'var(--danger)'};">
+                        ${covDelta >= 0 ? '↑' : '↓'} ${(Math.abs(covDelta) * 100).toFixed(1)}%
+                    </div>
+                    <div class="stat-label">覆盖率变化</div>
+                </div>
+            </div>
+
+            <div style="padding: 16px; background: var(--card); border-radius: 8px; margin-bottom: 16px;">
+                <h3 style="margin-top: 0;">调整原因</h3>
+                <p style="font-size: 1.1em;">${event.adjust_reason}</p>
+                ${event.notes ? `<p style="color: var(--muted); margin-top: 8px;"><em>备注: ${event.notes}</em></p>` : ''}
+            </div>
+
+            <div style="padding: 16px; background: var(--card); border-radius: 8px; margin-bottom: 16px;">
+                <h3 style="margin-top: 0;">决策变更</h3>
+                <div style="display: flex; gap: 24px; flex-wrap: wrap;">
+                    <div>
+                        <div style="color: var(--muted); font-size: 0.9em;">分水规则</div>
+                        <div style="font-size: 1.2em; font-weight: 600;">
+                            ${ruleLabels[event.rule_before] || event.rule_before || '-'}
+                            → ${ruleLabels[event.rule_after] || event.rule_after || '-'}
+                        </div>
+                    </div>
+                    <div>
+                        <div style="color: var(--muted); font-size: 0.9em;">闸口调整</div>
+                        <div style="font-size: 1.2em; font-weight: 600;">${event.gate_changes.length} 处</div>
+                    </div>
+                    <div>
+                        <div style="color: var(--muted); font-size: 0.9em;">状态</div>
+                        <div style="font-size: 1.2em; font-weight: 600;">
+                            ${event.published ? '<span class="badge badge-published">已发布执行</span>' : '<span class="badge badge-draft">未执行</span>'}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            ${event.gate_changes.length > 0 ? `
+            <div style="padding: 16px; background: var(--card); border-radius: 8px;">
+                <h3 style="margin-top: 0;">闸口具体调整</h3>
+                <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+                    ${event.gate_changes.map(gc => `
+                        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 6px; min-width: 200px;">
+                            <div style="font-weight: 600;">${gc.branch_canal_name} - ${gc.gate_name}</div>
+                            <div style="font-size: 0.9em; color: var(--muted); margin-top: 4px;">
+                                开度: ${gc.opening_before}% → <strong style="color: var(--accent);">${gc.opening_after}%</strong>
+                            </div>
+                            <div style="font-size: 0.85em; color: var(--muted); margin-top: 2px;">
+                                流量: ${gc.flow_before.toFixed(4)} → ${gc.flow_after.toFixed(4)}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+            ` : ''}
+        </div>
+    `;
+
+    document.getElementById('playbackContent').innerHTML = html;
+}
+
+function updatePlaybackControls() {
+    const total = timelineEvents.length;
+    document.getElementById('btnFirst').disabled = currentPlaybackIndex <= 0;
+    document.getElementById('btnPrev').disabled = currentPlaybackIndex <= 0;
+    document.getElementById('btnNext').disabled = currentPlaybackIndex >= total - 1;
+    document.getElementById('btnLast').disabled = currentPlaybackIndex >= total - 1;
+}
+
+function playbackFirst() {
+    stopPlayback();
+    currentPlaybackIndex = 0;
+    updatePlaybackDisplay();
+    updatePlaybackControls();
+}
+
+function playbackLast() {
+    stopPlayback();
+    currentPlaybackIndex = timelineEvents.length - 1;
+    updatePlaybackDisplay();
+    updatePlaybackControls();
+}
+
+function playbackPrev() {
+    stopPlayback();
+    if (currentPlaybackIndex > 0) {
+        currentPlaybackIndex--;
+        updatePlaybackDisplay();
+        updatePlaybackControls();
+    }
+}
+
+function playbackNext() {
+    if (currentPlaybackIndex < timelineEvents.length - 1) {
+        currentPlaybackIndex++;
+        updatePlaybackDisplay();
+        updatePlaybackControls();
+    } else {
+        stopPlayback();
+    }
+}
+
+function togglePlayback() {
+    if (playbackInterval) {
+        stopPlayback();
+    } else {
+        startPlayback();
+    }
+}
+
+function startPlayback() {
+    if (currentPlaybackIndex >= timelineEvents.length - 1) {
+        currentPlaybackIndex = 0;
+        updatePlaybackDisplay();
+    }
+    document.getElementById('btnPlay').textContent = '⏸ 暂停';
+    playbackInterval = setInterval(playbackNext, playbackSpeed);
+}
+
+function stopPlayback() {
+    if (playbackInterval) {
+        clearInterval(playbackInterval);
+        playbackInterval = null;
+    }
+    document.getElementById('btnPlay').textContent = '▶ 自动播放';
+}
+
+function updatePlaybackSpeed() {
+    playbackSpeed = parseInt(document.getElementById('playbackSpeed').value);
+    if (playbackInterval) {
+        stopPlayback();
+        startPlayback();
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadTimeline();
+});
+
+document.addEventListener('keydown', (e) => {
+    if (document.getElementById('tab-playback').style.display !== 'none') {
+        if (e.key === 'ArrowLeft') playbackPrev();
+        if (e.key === 'ArrowRight') playbackNext();
+        if (e.key === ' ') {
+            e.preventDefault();
+            togglePlayback();
+        }
+    }
+    if (e.key === 'Escape') closeModal();
+});
+</script>
+{% endblock %}

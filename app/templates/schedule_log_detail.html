@@ -1,0 +1,302 @@
+{% extends "base.html" %}
+
+{% block title %}调度详情 - {{ weir.name }}{% endblock %}
+
+{% block nav_weirs %}class="active"{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+        <div>
+            <h1 style="margin-bottom: 4px;">调度详情 - {{ weir.name }}</h1>
+            <p style="color: var(--muted);">调度时间: {{ log.adjust_time }}</p>
+        </div>
+        <div class="action-bar">
+            <a href="/weirs/{{ weir.id }}/schedule-logs" class="btn btn-sm btn-outline">返回日志列表</a>
+            {% if not log.published %}
+            <form method="post" action="/weirs/{{ weir.id }}/schedule-logs/{{ log.id }}/apply" style="display: inline;" onsubmit="return confirm('确定要执行此调度吗？这将更新所有相关闸口的开度设置。');">
+                <button type="submit" class="btn btn-sm btn-success">▶ 执行调度</button>
+            </form>
+            {% endif %}
+            <form method="post" action="/weirs/{{ weir.id }}/schedule-logs/{{ log.id }}/delete" style="display: inline;" onsubmit="return confirm('确定要删除这条日志吗？此操作不可撤销。');">
+                <button type="submit" class="btn btn-sm btn-danger">删除</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+{% if log.published %}
+<div class="alert alert-success">
+    ✅ 此调度已于 {{ log.published_at }} 执行完成，闸口设置已更新。
+</div>
+{% endif %}
+
+<div class="card">
+    <h2>基本信息</h2>
+    <div class="stat-row">
+        <div class="stat-card">
+            <div class="stat-value">{{ log.operator }}</div>
+            <div class="stat-label">操作者</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{{ log.water_level }}</div>
+            <div class="stat-label">当时水位 (m)</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{{ log.water_level_date or '-' }}</div>
+            <div class="stat-label">水位日期</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{{ gate_changes|length }}</div>
+            <div class="stat-label">闸口调整数</div>
+        </div>
+    </div>
+
+    <table>
+        <tr>
+            <th style="width: 140px;">调整原因</th>
+            <td>{{ log.adjust_reason }}</td>
+        </tr>
+        <tr>
+            <th>分水规则变更</th>
+            <td>
+                <span style="color: var(--muted);">{{ rule_labels.get(log.rule_before, log.rule_before) }}</span>
+                → <strong>{{ rule_labels.get(log.rule_after, log.rule_after) }}</strong>
+            </td>
+        </tr>
+        {% if log.scheme_name %}
+        <tr>
+            <th>关联方案</th>
+            <td>{{ log.scheme_name }} ({{ log.scheme_status }})</td>
+        </tr>
+        {% endif %}
+        {% if log.notes %}
+        <tr>
+            <th>备注</th>
+            <td>{{ log.notes }}</td>
+        </tr>
+        {% endif %}
+        <tr>
+            <th>状态</th>
+            <td>
+                {% if log.published %}
+                <span class="badge badge-published">已发布执行</span>
+                {% else %}
+                <span class="badge badge-draft">草稿 - 未执行</span>
+                {% endif %}
+            </td>
+        </tr>
+    </table>
+</div>
+
+<div class="card">
+    <h2>效果对比</h2>
+    <div class="stat-row">
+        <div class="stat-card">
+            <div class="stat-value">{{ "%.4f"|format(log.total_flow_before) }}</div>
+            <div class="stat-label">调整前总流量</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{{ "%.4f"|format(log.total_flow_after) }}</div>
+            <div class="stat-label">调整后总流量</div>
+        </div>
+        <div class="stat-card">
+            {% set flow_delta = log.total_flow_after - log.total_flow_before %}
+            <div class="stat-value" style="color: {% if flow_delta > 0 %}var(--success){% elif flow_delta < 0 %}var(--danger){% else %}var(--muted){% endif %};">
+                {{ "%+.4f"|format(flow_delta) }}
+            </div>
+            <div class="stat-label">流量变化</div>
+        </div>
+    </div>
+    <div class="stat-row">
+        <div class="stat-card">
+            <div class="stat-value">{{ "%.1f"|format(log.avg_coverage_before * 100) }}%</div>
+            <div class="stat-label">调整前平均覆盖率</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{{ "%.1f"|format(log.avg_coverage_after * 100) }}%</div>
+            <div class="stat-label">调整后平均覆盖率</div>
+        </div>
+        <div class="stat-card">
+            {% set cov_delta = log.avg_coverage_after - log.avg_coverage_before %}
+            <div class="stat-value" style="color: {% if cov_delta > 0 %}var(--success){% elif cov_delta < 0 %}var(--danger){% else %}var(--muted){% endif %};">
+                {{ "%+.1f"|format(cov_delta * 100) }}%
+            </div>
+            <div class="stat-label">覆盖率变化</div>
+        </div>
+    </div>
+
+    <div id="comparisonChart" class="chart-container"></div>
+</div>
+
+<div class="card">
+    <h2>闸口变更详情</h2>
+    {% if gate_changes %}
+    <table>
+        <thead>
+            <tr>
+                <th>支渠</th>
+                <th>闸口</th>
+                <th>开度前</th>
+                <th>开度后</th>
+                <th>变化量</th>
+                <th>流量前</th>
+                <th>流量后</th>
+                <th>流量变化</th>
+                <th>覆盖率前</th>
+                <th>覆盖率后</th>
+                <th>覆盖率变化</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for gc in gate_changes %}
+            {% set opening_delta = gc.opening_after - gc.opening_before %}
+            {% set flow_delta = gc.flow_after - gc.flow_before %}
+            {% set cov_delta = gc.coverage_after - gc.coverage_before %}
+            <tr>
+                <td>{{ gc.branch_canal_name }}</td>
+                <td>{{ gc.gate_name }}</td>
+                <td>{{ gc.opening_before }}%</td>
+                <td>{{ gc.opening_after }}%</td>
+                <td>
+                    <span style="color: {% if opening_delta > 0 %}var(--success){% elif opening_delta < 0 %}var(--danger){% else %}var(--muted){% endif %};">
+                        {{ "%+d"|format(opening_delta) }}%
+                    </span>
+                </td>
+                <td>{{ "%.4f"|format(gc.flow_before) }}</td>
+                <td>{{ "%.4f"|format(gc.flow_after) }}</td>
+                <td>
+                    <span style="color: {% if flow_delta > 0 %}var(--success){% elif flow_delta < 0 %}var(--danger){% else %}var(--muted){% endif %};">
+                        {{ "%+.4f"|format(flow_delta) }}
+                    </span>
+                </td>
+                <td>{{ "%.1f"|format(gc.coverage_before * 100) }}%</td>
+                <td>{{ "%.1f"|format(gc.coverage_after * 100) }}%</td>
+                <td>
+                    <span style="color: {% if cov_delta > 0 %}var(--success){% elif cov_delta < 0 %}var(--danger){% else %}var(--muted){% endif %};">
+                        {{ "%+.1f"|format(cov_delta * 100) }}%
+                    </span>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <h3 style="margin-top: 24px;">各支渠效果对比图</h3>
+    <div id="branchChart" class="chart-container"></div>
+    {% else %}
+    <div class="empty-state">
+        <div class="icon">📭</div>
+        <p>本次调度没有闸口变更记录</p>
+    </div>
+    {% endif %}
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const log = {{ log | tojson }};
+const gateChanges = {{ gate_changes | tojson }};
+
+const flowDelta = log.total_flow_after - log.total_flow_before;
+const covDelta = log.avg_coverage_after - log.avg_coverage_before;
+
+const compTraces = [
+    {
+        x: ['调整前', '调整后'],
+        y: [log.total_flow_before, log.total_flow_after],
+        name: '总流量',
+        type: 'bar',
+        marker: { color: ['#95a5a6', '#b8860b'] },
+        yaxis: 'y'
+    },
+    {
+        x: ['调整前', '调整后'],
+        y: [log.avg_coverage_before * 100, log.avg_coverage_after * 100],
+        name: '平均覆盖率(%)',
+        type: 'bar',
+        marker: { color: ['#95a5a6', '#27ae60'] },
+        yaxis: 'y2'
+    }
+];
+
+const compLayout = {
+    title: '调度前后整体效果对比',
+    barmode: 'group',
+    yaxis: { title: '总流量', side: 'left' },
+    yaxis2: { title: '覆盖率(%)', side: 'right', overlaying: 'y' },
+    legend: { orientation: 'h', y: -0.2 },
+    margin: { l: 60, r: 60, t: 50, b: 60 },
+    height: 400,
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(0,0,0,0)',
+    font: { family: 'inherit' },
+    annotations: [
+        {
+            x: '调整后',
+            y: log.total_flow_after,
+            text: (flowDelta >= 0 ? '↑' : '↓') + ' ' + Math.abs(flowDelta).toFixed(4),
+            showarrow: true,
+            arrowhead: 2,
+            ax: 40,
+            ay: -20,
+            font: { color: flowDelta >= 0 ? 'var(--success)' : 'var(--danger)', size: 14 }
+        },
+        {
+            x: '调整后',
+            y: log.avg_coverage_after * 100,
+            text: (covDelta >= 0 ? '↑' : '↓') + ' ' + (Math.abs(covDelta) * 100).toFixed(1) + '%',
+            showarrow: true,
+            arrowhead: 2,
+            ax: -40,
+            ay: -20,
+            font: { color: covDelta >= 0 ? 'var(--success)' : 'var(--danger)', size: 14 }
+        }
+    ]
+};
+
+Plotly.newPlot('comparisonChart', compTraces, compLayout, { responsive: true });
+
+if (gateChanges && gateChanges.length > 0) {
+    const branchNames = gateChanges.map(gc => gc.branch_canal_name + '/' + gc.gate_name);
+    const flowsBefore = gateChanges.map(gc => gc.flow_before);
+    const flowsAfter = gateChanges.map(gc => gc.flow_after);
+    const covsBefore = gateChanges.map(gc => gc.coverage_before * 100);
+    const covsAfter = gateChanges.map(gc => gc.coverage_after * 100);
+
+    const branchTraces = [
+        {
+            x: branchNames,
+            y: flowsBefore,
+            name: '调整前流量',
+            type: 'bar',
+            marker: { color: '#95a5a6' },
+            yaxis: 'y'
+        },
+        {
+            x: branchNames,
+            y: flowsAfter,
+            name: '调整后流量',
+            type: 'bar',
+            marker: { color: '#b8860b' },
+            yaxis: 'y'
+        }
+    ];
+
+    const branchLayout = {
+        title: '各闸口流量调整对比',
+        barmode: 'group',
+        yaxis: { title: '流量' },
+        legend: { orientation: 'h', y: -0.3 },
+        margin: { l: 60, r: 20, t: 50, b: 120 },
+        height: 500,
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)',
+        font: { family: 'inherit' }
+    };
+
+    Plotly.newPlot('branchChart', branchTraces, branchLayout, { responsive: true });
+}
+</script>
+{% endblock %}

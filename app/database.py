@@ -173,6 +173,48 @@ def init_db():
             checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS schedule_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            weir_id INTEGER NOT NULL,
+            scheme_id INTEGER,
+            operator TEXT NOT NULL DEFAULT '系统管理员',
+            adjust_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            adjust_reason TEXT NOT NULL,
+            water_level REAL DEFAULT 0,
+            water_level_date TEXT,
+            rule_before TEXT,
+            rule_after TEXT,
+            total_flow_before REAL DEFAULT 0,
+            total_flow_after REAL DEFAULT 0,
+            avg_coverage_before REAL DEFAULT 0,
+            avg_coverage_after REAL DEFAULT 0,
+            published INTEGER NOT NULL DEFAULT 0,
+            published_at TIMESTAMP,
+            notes TEXT DEFAULT '',
+            FOREIGN KEY (weir_id) REFERENCES weirs(id) ON DELETE CASCADE,
+            FOREIGN KEY (scheme_id) REFERENCES schemes(id) ON DELETE SET NULL
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS gate_changes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            schedule_log_id INTEGER NOT NULL,
+            gate_id INTEGER,
+            branch_canal_id INTEGER NOT NULL,
+            branch_canal_name TEXT NOT NULL,
+            gate_name TEXT NOT NULL,
+            opening_before INTEGER NOT NULL,
+            opening_after INTEGER NOT NULL,
+            flow_before REAL DEFAULT 0,
+            flow_after REAL DEFAULT 0,
+            coverage_before REAL DEFAULT 0,
+            coverage_after REAL DEFAULT 0,
+            FOREIGN KEY (schedule_log_id) REFERENCES schedule_logs(id) ON DELETE CASCADE,
+            FOREIGN KEY (gate_id) REFERENCES gates(id) ON DELETE SET NULL,
+            FOREIGN KEY (branch_canal_id) REFERENCES branch_canals(id) ON DELETE CASCADE
+        )
+    """)
 
     def _has_column(table, col):
         rows = conn.execute(f"PRAGMA table_info({table})").fetchall()

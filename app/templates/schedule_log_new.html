@@ -1,0 +1,537 @@
+{% extends "base.html" %}
+
+{% block title %}记录新调度 - {{ weir.name }}{% endblock %}
+
+{% block nav_weirs %}class="active"{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+        <div>
+            <h1 style="margin-bottom: 4px;">记录新调度 - {{ weir.name }}</h1>
+            <p style="color: var(--muted);">记录分水调整的详细信息，包括闸口变更、规则调整和水位背景</p>
+        </div>
+        <a href="/weirs/{{ weir.id }}/schedule-logs" class="btn btn-sm btn-outline">返回日志列表</a>
+    </div>
+</div>
+
+<form method="post" action="/weirs/{{ weir.id }}/schedule-logs" onsubmit="return validateForm()">
+    <div class="card">
+        <h2>基本信息</h2>
+        <div class="form-row">
+            <div class="form-group">
+                <label>操作者 *</label>
+                <input type="text" name="operator" required value="系统管理员">
+            </div>
+            <div class="form-group">
+                <label>主渠 *</label>
+                <select name="main_canal_id" id="mainCanalSelect" onchange="onMainCanalChange()" required>
+                    <option value="">请选择主渠</option>
+                    {% for mc in main_canals %}
+                    <option value="{{ mc.id }}">{{ mc.name }} (宽度: {{ mc.width }}m)</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label>关联方案</label>
+                <select name="scheme_id">
+                    <option value="">无</option>
+                    {% for s in schemes %}
+                    <option value="{{ s.id }}">{{ s.name }} ({{ rule_labels.get(s.rule, s.rule) }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        <div class="form-group">
+            <label>调整原因 *</label>
+            <textarea name="adjust_reason" rows="3" required placeholder="请描述本次分水调整的原因，如：水位上涨、春耕需求、旱情缓解等"></textarea>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>水位背景</h2>
+        <div class="form-row">
+            <div class="form-group">
+                <label>水位日期 *</label>
+                <select name="water_level_date" id="waterLevelDate" onchange="onWaterLevelDateChange()" required>
+                    <option value="">请选择日期</option>
+                    {% for wl in water_levels %}
+                    <option value="{{ wl.date }}" data-level="{{ wl.level }}">{{ wl.date }} - 水位: {{ wl.level }} {% if wl.is_simulated %}(模拟){% endif %}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label>当前水位 (m) *</label>
+                <input type="number" step="0.0001" name="water_level" id="waterLevel" required min="0" placeholder="选择日期后自动填充">
+            </div>
+        </div>
+        <div id="waterLevelPreview" style="display: none;">
+            <div class="stat-row">
+                <div class="stat-card">
+                    <div class="stat-value" id="previewTotalFlow">0.0000</div>
+                    <div class="stat-label">理论总流量</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>分水规则调整</h2>
+        <div class="form-row">
+            <div class="form-group">
+                <label>调整前规则 *</label>
+                <select name="rule_before" required>
+                    {% for key, label in rule_labels.items() %}
+                    <option value="{{ key }}">{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label>调整后规则 *</label>
+                <select name="rule_after" required>
+                    {% for key, label in rule_labels.items() %}
+                    <option value="{{ key }}">{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>闸口开度调整</h2>
+        <p style="color: var(--muted); margin-bottom: 16px;">设置每个闸口调整前后的开度（0-100%），系统将自动计算对流量和覆盖率的影响</p>
+
+        <div id="gatesContainer">
+            <div class="empty-state">
+                <div class="icon">🔧</div>
+                <p>请先选择主渠以显示闸口列表</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>预测效果预览</h2>
+        <p style="color: var(--muted); margin-bottom: 16px;">基于当前输入，系统自动预测调整前后的效果对比</p>
+
+        <div id="previewContainer" style="display: none;">
+            <div class="stat-row">
+                <div class="stat-card">
+                    <div class="stat-value" id="previewFlowBefore">0.0000</div>
+                    <div class="stat-label">调整前总流量</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="previewFlowAfter">0.0000</div>
+                    <div class="stat-label">调整后总流量</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="previewFlowDelta">+0.0000</div>
+                    <div class="stat-label">流量变化</div>
+                </div>
+            </div>
+            <div class="stat-row">
+                <div class="stat-card">
+                    <div class="stat-value" id="previewCovBefore">0.0%</div>
+                    <div class="stat-label">调整前平均覆盖率</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="previewCovAfter">0.0%</div>
+                    <div class="stat-label">调整后平均覆盖率</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="previewCovDelta">+0.0%</div>
+                    <div class="stat-label">覆盖率变化</div>
+                </div>
+            </div>
+
+            <h3 style="margin-top: 20px;">各支渠预测变化</h3>
+            <div id="branchPreview" style="overflow-x: auto;"></div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>备注</h2>
+        <div class="form-group">
+            <label>其他说明</label>
+            <textarea name="notes" rows="3" placeholder="可选：记录其他需要说明的信息"></textarea>
+        </div>
+    </div>
+
+    <div class="action-bar" style="justify-content: flex-end;">
+        <a href="/weirs/{{ weir.id }}/schedule-logs" class="btn btn-outline">取消</a>
+        <button type="submit" class="btn btn-primary">保存调度记录</button>
+    </div>
+</form>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const mainCanals = {{ main_canals | tojson }};
+const branchCanalsMap = {{ branch_canals_map | tojson }};
+const ruleLabels = {{ rule_labels | tojson }};
+
+let currentMainCanalId = null;
+let currentWaterLevel = 0;
+
+function onMainCanalChange() {
+    const select = document.getElementById('mainCanalSelect');
+    currentMainCanalId = parseInt(select.value) || null;
+    renderGatesContainer();
+    updatePreview();
+}
+
+function onWaterLevelDateChange() {
+    const select = document.getElementById('waterLevelDate');
+    const selectedOption = select.options[select.selectedIndex];
+    const level = selectedOption.dataset.level || '';
+    document.getElementById('waterLevel').value = level;
+    currentWaterLevel = parseFloat(level) || 0;
+
+    if (currentWaterLevel > 0 && currentMainCanalId) {
+        const mc = mainCanals.find(m => m.id === currentMainCanalId);
+        if (mc) {
+            const totalFlow = mc.width * Math.sqrt(2 * 9.81) * Math.pow(currentWaterLevel, 1.5);
+            document.getElementById('previewTotalFlow').textContent = totalFlow.toFixed(4);
+            document.getElementById('waterLevelPreview').style.display = 'block';
+        }
+    } else {
+        document.getElementById('waterLevelPreview').style.display = 'none';
+    }
+    updatePreview();
+}
+
+function renderGatesContainer() {
+    const container = document.getElementById('gatesContainer');
+
+    if (!currentMainCanalId) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <div class="icon">🔧</div>
+                <p>请先选择主渠以显示闸口列表</p>
+            </div>
+        `;
+        return;
+    }
+
+    const branchCanals = branchCanalsMap[currentMainCanalId] || [];
+
+    if (branchCanals.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <div class="icon">📭</div>
+                <p>该主渠下没有支渠和闸口</p>
+            </div>
+        `;
+        return;
+    }
+
+    let html = '';
+    branchCanals.forEach(bc => {
+        if (bc.gates && bc.gates.length > 0) {
+            html += `
+                <div style="padding: 16px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 16px;">
+                    <h3 style="margin-top: 0; margin-bottom: 12px;">
+                        ${bc.name}
+                        <span style="font-weight: normal; font-size: 0.85em; color: var(--muted); margin-left: 8px;">
+                            面积: ${bc.acreage}亩 · 类型: {{ farm_type_labels.get('${bc.farm_type}', '${bc.farm_type}') }}
+                        </span>
+                    </h3>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px;">
+            `;
+            bc.gates.forEach(g => {
+                html += `
+                    <div style="padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: #faf6ee;">
+                        <div style="font-weight: 600; margin-bottom: 8px;">${g.name}</div>
+                        <div class="form-row" style="gap: 8px;">
+                            <div class="form-group" style="flex: 1; min-width: 80px;">
+                                <label style="font-size: 0.85em;">调整前 (%)</label>
+                                <input type="number" min="0" max="100"
+                                       name="gate_before_${g.id}"
+                                       value="${g.opening}"
+                                       onchange="updatePreview()"
+                                       oninput="updatePreview()">
+                            </div>
+                            <div class="form-group" style="flex: 1; min-width: 80px;">
+                                <label style="font-size: 0.85em;">调整后 (%)</label>
+                                <input type="number" min="0" max="100"
+                                       name="gate_after_${g.id}"
+                                       value="${g.opening}"
+                                       onchange="updatePreview()"
+                                       oninput="updatePreview()">
+                            </div>
+                        </div>
+                        <div id="gate_preview_${g.id}" style="font-size: 0.85em; color: var(--muted); margin-top: 4px;"></div>
+                    </div>
+                `;
+            });
+            html += `
+                    </div>
+                </div>
+            `;
+        }
+    });
+
+    container.innerHTML = html;
+}
+
+function calcGateFlow(waterLevel, canalWidth, gateOpening) {
+    if (gateOpening <= 0 || waterLevel <= 0 || canalWidth <= 0) return 0;
+    const effectiveWidth = canalWidth * (gateOpening / 100);
+    return 0.61 * effectiveWidth * Math.sqrt(2 * 9.81) * Math.pow(waterLevel, 1.5);
+}
+
+function calcCoverage(flow, acreage, farmType, waterLevel) {
+    if (acreage <= 0 || flow <= 0) return 0;
+    const needs = { general: 1.0, paddy: 1.8, dryland: 0.6, vegetable: 1.4, orchard: 0.9 };
+    const needCoeff = needs[farmType] || 1.0;
+    const needed = acreage * needCoeff * 0.01;
+    if (needed <= 0) return 0;
+    return Math.min(1.0, flow / needed);
+}
+
+function updatePreview() {
+    const previewContainer = document.getElementById('previewContainer');
+    const branchPreview = document.getElementById('branchPreview');
+
+    if (!currentMainCanalId || currentWaterLevel <= 0) {
+        previewContainer.style.display = 'none';
+        return;
+    }
+
+    const ruleBefore = document.querySelector('select[name="rule_before"]').value;
+    const ruleAfter = document.querySelector('select[name="rule_after"]').value;
+    const mc = mainCanals.find(m => m.id === currentMainCanalId);
+    const branchCanals = branchCanalsMap[currentMainCanalId] || [];
+
+    const totalFlow = mc.width * Math.sqrt(2 * 9.81) * Math.pow(currentWaterLevel, 1.5);
+
+    const beforeState = computeDistributionState(branchCanals, totalFlow, ruleBefore, 'before');
+    const afterState = computeDistributionState(branchCanals, totalFlow, ruleAfter, 'after');
+
+    document.getElementById('previewFlowBefore').textContent = beforeState.totalAllocated.toFixed(4);
+    document.getElementById('previewFlowAfter').textContent = afterState.totalAllocated.toFixed(4);
+    const flowDelta = afterState.totalAllocated - beforeState.totalAllocated;
+    document.getElementById('previewFlowDelta').textContent = (flowDelta >= 0 ? '+' : '') + flowDelta.toFixed(4);
+    document.getElementById('previewFlowDelta').style.color = flowDelta >= 0 ? 'var(--success)' : 'var(--danger)';
+
+    document.getElementById('previewCovBefore').textContent = (beforeState.avgCoverage * 100).toFixed(1) + '%';
+    document.getElementById('previewCovAfter').textContent = (afterState.avgCoverage * 100).toFixed(1) + '%';
+    const covDelta = afterState.avgCoverage - beforeState.avgCoverage;
+    document.getElementById('previewCovDelta').textContent = (covDelta >= 0 ? '+' : '') + (covDelta * 100).toFixed(1) + '%';
+    document.getElementById('previewCovDelta').style.color = covDelta >= 0 ? 'var(--success)' : 'var(--danger)';
+
+    let tableHtml = '<table><thead><tr><th>支渠</th><th>闸口</th><th>流量变化</th><th>覆盖率变化</th></tr></thead><tbody>';
+    branchCanals.forEach(bc => {
+        if (bc.gates && bc.gates.length > 0) {
+            bc.gates.forEach(g => {
+                const beforeFlow = beforeState.gateFlows[g.id] || 0;
+                const afterFlow = afterState.gateFlows[g.id] || 0;
+                const beforeCov = beforeState.gateCoverages[g.id] || 0;
+                const afterCov = afterState.gateCoverages[g.id] || 0;
+                const flowDelta = afterFlow - beforeFlow;
+                const covDelta = afterCov - beforeCov;
+
+                tableHtml += `
+                    <tr>
+                        <td>${bc.name}</td>
+                        <td>${g.name}</td>
+                        <td>
+                            ${beforeFlow.toFixed(4)} → ${afterFlow.toFixed(4)}
+                            <span style="color: ${flowDelta >= 0 ? 'var(--success)' : 'var(--danger)'};">
+                                (${flowDelta >= 0 ? '+' : ''}${flowDelta.toFixed(4)})
+                            </span>
+                        </td>
+                        <td>
+                            ${(beforeCov * 100).toFixed(1)}% → ${(afterCov * 100).toFixed(1)}%
+                            <span style="color: ${covDelta >= 0 ? 'var(--success)' : 'var(--danger)'};">
+                                (${covDelta >= 0 ? '+' : ''}${(covDelta * 100).toFixed(1)}%)
+                            </span>
+                        </td>
+                    </tr>
+                `;
+
+                const gatePreview = document.getElementById(`gate_preview_${g.id}`);
+                if (gatePreview) {
+                    const delta = afterFlow - beforeFlow;
+                    gatePreview.innerHTML = `预计流量: ${beforeFlow.toFixed(3)} → ${afterFlow.toFixed(3)} <span style="color: ${delta >= 0 ? 'var(--success)' : 'var(--danger)'};">(${delta >= 0 ? '↑' : '↓'} ${Math.abs(delta).toFixed(3)})</span>`;
+                }
+            });
+        }
+    });
+    tableHtml += '</tbody></table>';
+    branchPreview.innerHTML = tableHtml;
+
+    previewContainer.style.display = 'block';
+}
+
+function computeDistributionState(branchCanals, totalFlow, rule, which) {
+    const bcData = branchCanals.map(bc => {
+        let totalOpening = 0;
+        let gateCount = 0;
+        if (bc.gates && bc.gates.length > 0) {
+            bc.gates.forEach(g => {
+                const input = document.querySelector(`input[name="gate_${which}_${g.id}"]`);
+                const opening = input ? parseInt(input.value) || g.opening : g.opening;
+                totalOpening += opening;
+                gateCount++;
+            });
+        }
+        const avgOpening = gateCount > 0 ? totalOpening / gateCount : 100;
+        return {
+            id: bc.id,
+            name: bc.name,
+            position: bc.position,
+            width: bc.width,
+            acreage: bc.acreage,
+            farm_type: bc.farm_type,
+            gate_opening: avgOpening,
+            gates: bc.gates || [],
+            which: which,
+        };
+    });
+
+    const capacities = bcData.map(bc => {
+        return calcGateFlow(currentWaterLevel, bc.width, bc.gate_opening);
+    });
+
+    let allocated = new Array(bcData.length).fill(0);
+    let remaining = totalFlow;
+
+    if (rule === 'equal') {
+        let active = bcData.map((_, i) => i).filter(i => capacities[i] > 0);
+        while (active.length > 0 && remaining > 1e-9) {
+            const share = remaining / active.length;
+            let newActive = [];
+            let used = 0;
+            for (const i of active) {
+                const room = capacities[i] - allocated[i];
+                if (room <= 1e-9) continue;
+                const take = Math.min(share, room);
+                allocated[i] += take;
+                used += take;
+                if (room - take > 1e-9) newActive.push(i);
+            }
+            remaining -= used;
+            if (used <= 1e-9) break;
+            active = newActive;
+        }
+    } else if (rule === 'downstream_first') {
+        const sorted = bcData
+            .map((bc, i) => ({ bc, i }))
+            .sort((a, b) => b.bc.position - a.bc.position);
+        for (const { i } of sorted) {
+            if (remaining <= 1e-9) break;
+            const take = Math.min(capacities[i], remaining);
+            allocated[i] = take;
+            remaining -= take;
+        }
+    } else if (rule === 'acreage_ratio') {
+        const totalAcreage = bcData.reduce((sum, bc) => sum + bc.acreage, 0);
+        if (totalAcreage <= 0) {
+            let active = bcData.map((_, i) => i).filter(i => capacities[i] > 0);
+            while (active.length > 0 && remaining > 1e-9) {
+                const share = remaining / active.length;
+                let newActive = [];
+                let used = 0;
+                for (const i of active) {
+                    const room = capacities[i] - allocated[i];
+                    if (room <= 1e-9) continue;
+                    const take = Math.min(share, room);
+                    allocated[i] += take;
+                    used += take;
+                    if (room - take > 1e-9) newActive.push(i);
+                }
+                remaining -= used;
+                if (used <= 1e-9) break;
+                active = newActive;
+            }
+        } else {
+            const ratios = bcData.map(bc => bc.acreage / totalAcreage);
+            let active = bcData.map((_, i) => i).filter(i => capacities[i] > 0);
+            while (active.length > 0 && remaining > 1e-9) {
+                const activeRatioSum = active.reduce((sum, i) => sum + ratios[i], 0);
+                if (activeRatioSum <= 0) {
+                    const share = remaining / active.length;
+                    for (const i of active) {
+                        const room = capacities[i] - allocated[i];
+                        const take = Math.min(share, room);
+                        allocated[i] += take;
+                        remaining -= take;
+                    }
+                    break;
+                }
+                let used = 0;
+                let newActive = [];
+                for (const i of active) {
+                    const room = capacities[i] - allocated[i];
+                    if (room <= 1e-9) continue;
+                    const target = remaining * (ratios[i] / activeRatioSum);
+                    const take = Math.min(target, room);
+                    allocated[i] += take;
+                    used += take;
+                    if (room - take > 1e-9) newActive.push(i);
+                }
+                remaining -= used;
+                if (used <= 1e-9) break;
+                active = newActive;
+            }
+        }
+    }
+
+    const gateFlows = {};
+    const gateCoverages = {};
+    let totalAllocated = 0;
+    let totalCoverage = 0;
+    let coverageCount = 0;
+
+    bcData.forEach((bc, idx) => {
+        const flow = allocated[idx];
+        totalAllocated += flow;
+        const coverage = calcCoverage(flow, bc.acreage, bc.farm_type, currentWaterLevel);
+        totalCoverage += coverage;
+        coverageCount++;
+
+        if (bc.gates && bc.gates.length > 0) {
+            const perGateFlow = flow / bc.gates.length;
+            const perGateCoverage = coverage / bc.gates.length;
+            bc.gates.forEach(g => {
+                gateFlows[g.id] = perGateFlow;
+                gateCoverages[g.id] = perGateCoverage;
+            });
+        }
+    });
+
+    return {
+        totalAllocated,
+        avgCoverage: coverageCount > 0 ? totalCoverage / coverageCount : 0,
+        gateFlows,
+        gateCoverages,
+    };
+}
+
+function validateForm() {
+    const adjustReason = document.querySelector('textarea[name="adjust_reason"]').value.trim();
+    if (!adjustReason) {
+        alert('请填写调整原因');
+        return false;
+    }
+
+    const waterLevel = parseFloat(document.getElementById('waterLevel').value);
+    if (isNaN(waterLevel) || waterLevel <= 0) {
+        alert('请选择有效的水位日期');
+        return false;
+    }
+
+    if (!currentMainCanalId) {
+        alert('请选择主渠');
+        return false;
+    }
+
+    return true;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    updatePreview();
+});
+</script>
+{% endblock %}

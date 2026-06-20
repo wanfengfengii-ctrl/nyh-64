@@ -19,6 +19,7 @@
                     <a href="/weirs/{{ w.id }}/canals" class="btn btn-sm btn-info">渠闸参数</a>
                     <a href="/weirs/{{ w.id }}/waterlevels" class="btn btn-sm btn-primary">水位录入</a>
                     <a href="/weirs/{{ w.id }}/schemes" class="btn btn-sm btn-success">分水分析</a>
+                    <a href="/weirs/{{ w.id }}/schedule-logs" class="btn btn-sm btn-warning" style="background: #d35400; color: #fff;">调度日志</a>
                     <a href="/weirs/{{ w.id }}/edit" class="btn btn-sm btn-outline">编辑</a>
                     <form method="post" action="/weirs/{{ w.id }}/delete" style="display:inline" onsubmit="return confirm('确定删除？')">
                         <button type="submit" class="btn btn-sm btn-danger">删除</button>

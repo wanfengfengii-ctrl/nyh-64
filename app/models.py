@@ -237,3 +237,37 @@ class MissingDateFix(BaseModel):
     date: str
     level: float
     method: str = "interpolate"
+
+class GateChangeCreate(BaseModel):
+    gate_id: Optional[int] = None
+    branch_canal_id: int
+    branch_canal_name: str
+    gate_name: str
+    opening_before: int
+    opening_after: int
+    flow_before: float = 0.0
+    flow_after: float = 0.0
+    coverage_before: float = 0.0
+    coverage_after: float = 0.0
+
+class ScheduleLogCreate(BaseModel):
+    weir_id: int
+    scheme_id: Optional[int] = None
+    operator: str = "系统管理员"
+    adjust_reason: str
+    water_level: float = 0.0
+    water_level_date: Optional[str] = None
+    rule_before: Optional[str] = None
+    rule_after: Optional[str] = None
+    total_flow_before: float = 0.0
+    total_flow_after: float = 0.0
+    avg_coverage_before: float = 0.0
+    avg_coverage_after: float = 0.0
+    notes: Optional[str] = ""
+    gate_changes: List[GateChangeCreate] = []
+
+class ScheduleLogQuery(BaseModel):
+    weir_id: Optional[int] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    operator: Optional[str] = None
