@@ -1,0 +1,500 @@
+{% extends "base.html" %}
+{% block title %}结构改动效果追踪 - {{ weir.name }}{% endblock %}
+{% block nav_weirs %}class="active"{% endblock %}
+{% block content %}
+<h1>结构改动效果追踪 — {{ weir.name }}</h1>
+<p style="margin-bottom:16px">
+    <a href="/weirs/{{ weir.id }}/schemes" class="btn btn-sm btn-info">分水方案</a>
+    <a href="/weirs/{{ weir.id }}/optimization" class="btn btn-sm btn-info">🎯 参数寻优</a>
+    <a href="/weirs/{{ weir.id }}/compare" class="btn btn-sm btn-info">📈 报告对比</a>
+    <a href="/weirs/{{ weir.id }}/review" class="btn btn-sm btn-info">📝 实验复盘</a>
+    <a href="/weirs" class="btn btn-sm btn-outline">返回堰坝列表</a>
+</p>
+
+<div class="card">
+    <h2>追踪统计摘要</h2>
+    <div id="trackingSummary" class="stat-row">
+        <div class="stat-card">
+            <div class="stat-value">{{ structures|length }}</div>
+            <div class="stat-label">结构总数</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="totalChanges">-</div>
+            <div class="stat-label">总变更次数</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="improvementRate">-</div>
+            <div class="stat-label">改进率 (%)</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="avgYieldImprove">-</div>
+            <div class="stat-label">平均出汁率提升</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="mostChangedParam">-</div>
+            <div class="stat-label">最常调整参数</div>
+        </div>
+    </div>
+</div>
+
+<div class="tabs">
+    <button class="tab-btn active" onclick="showTab('structures')">🏗️ 结构列表</button>
+    <button class="tab-btn" onclick="showTab('logs')">📋 变更日志</button>
+    <button class="tab-btn" onclick="showTab('trends')">📈 优化趋势</button>
+</div>
+
+<div id="tab-structures" class="tab-content">
+    {% if structures %}
+    {% for s in structures %}
+    <div class="card" id="structure-{{ s.id }}">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">
+            <div>
+                <h2 style="margin:0">{{ s.name }}</h2>
+                <p style="color:var(--muted);font-size:0.9em">
+                    类型: {{ structure_type_labels.get(s.structure_type, s.structure_type) }} | 
+                    创建时间: {{ (s.created_at or '')[:16] }}
+                </p>
+            </div>
+            <button type="button" class="btn btn-sm btn-primary" onclick="toggleEditForm({{ s.id }})">✏️ 修改参数</button>
+        </div>
+
+        {% if structure_stats.get(s.id) %}
+        <div class="stat-row" style="margin-bottom:16px">
+            <div class="stat-card">
+                <div class="stat-value">{{ structure_stats[s.id].change_count }}</div>
+                <div class="stat-label">变更次数</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" style="color:{{ 'var(--success)' if structure_stats[s.id].juice_yield_change >= 0 else 'var(--danger)' }}">
+                    {{ '+' if structure_stats[s.id].juice_yield_change >= 0 else '' }}{{ structure_stats[s.id].juice_yield_change }}%
+                </div>
+                <div class="stat-label">出汁率累计变化</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" style="color:{{ 'var(--success)' if structure_stats[s.id].peak_pressure_change <= 0 else 'var(--danger)' }}">
+                    {{ '+' if structure_stats[s.id].peak_pressure_change >= 0 else '' }}{{ structure_stats[s.id].peak_pressure_change }}MPa
+                </div>
+                <div class="stat-label">峰值压力累计变化</div>
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="form-row" style="margin-bottom:16px">
+            <div class="form-group" style="flex:1;min-width:120px">
+                <label>螺杆直径</label>
+                <div style="font-family:monospace;font-size:1.1em;font-weight:600">{{ s.screw_diameter }} mm</div>
+            </div>
+            <div class="form-group" style="flex:1;min-width:120px">
+                <label>螺距</label>
+                <div style="font-family:monospace;font-size:1.1em;font-weight:600">{{ s.screw_pitch }} mm</div>
+            </div>
+            <div class="form-group" style="flex:1;min-width:120px">
+                <label>导程</label>
+                <div style="font-family:monospace;font-size:1.1em;font-weight:600">{{ s.screw_lead }} mm</div>
+            </div>
+            <div class="form-group" style="flex:1;min-width:120px">
+                <label>锥角</label>
+                <div style="font-family:monospace;font-size:1.1em;font-weight:600">{{ s.cone_angle }}°</div>
+            </div>
+            <div class="form-group" style="flex:1;min-width:120px">
+                <label>间隙</label>
+                <div style="font-family:monospace;font-size:1.1em;font-weight:600">{{ s.gap_size }} mm</div>
+            </div>
+            <div class="form-group" style="flex:1;min-width:120px">
+                <label>压缩比</label>
+                <div style="font-family:monospace;font-size:1.1em;font-weight:600">{{ s.compression_ratio }}</div>
+            </div>
+            <div class="form-group" style="flex:1;min-width:120px">
+                <label>转速</label>
+                <div style="font-family:monospace;font-size:1.1em;font-weight:600">{{ s.rotation_speed }} rpm</div>
+            </div>
+            <div class="form-group" style="flex:1;min-width:120px">
+                <label>进料速率</label>
+                <div style="font-family:monospace;font-size:1.1em;font-weight:600">{{ s.feed_rate }} kg/h</div>
+            </div>
+        </div>
+
+        <div id="editForm-{{ s.id }}" style="display:none;border-top:1px solid var(--border);padding-top:16px">
+            <h3>修改参数</h3>
+            <form method="post" action="/structures/{{ s.id }}/update" onsubmit="return validateChange({{ s.id }})">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>名称</label>
+                        <input type="text" name="name" value="{{ s.name }}">
+                    </div>
+                    <div class="form-group">
+                        <label>结构类型</label>
+                        <select name="structure_type">
+                            {% for key, label in structure_type_labels.items() %}
+                            <option value="{{ key }}" {% if s.structure_type == key %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>螺杆直径 (mm)</label>
+                        <input type="number" name="screw_diameter" step="1" value="{{ s.screw_diameter }}" class="param-input" data-param="screw_diameter" data-original="{{ s.screw_diameter }}" oninput="previewChange({{ s.id }})">
+                    </div>
+                    <div class="form-group">
+                        <label>螺距 (mm)</label>
+                        <input type="number" name="screw_pitch" step="1" value="{{ s.screw_pitch }}" class="param-input" data-param="screw_pitch" data-original="{{ s.screw_pitch }}" oninput="previewChange({{ s.id }})">
+                    </div>
+                    <div class="form-group">
+                        <label>导程 (mm)</label>
+                        <input type="number" name="screw_lead" step="1" value="{{ s.screw_lead }}" class="param-input" data-param="screw_lead" data-original="{{ s.screw_lead }}" oninput="previewChange({{ s.id }})">
+                    </div>
+                    <div class="form-group">
+                        <label>锥角 (°)</label>
+                        <input type="number" name="cone_angle" step="1" value="{{ s.cone_angle }}" class="param-input" data-param="cone_angle" data-original="{{ s.cone_angle }}" oninput="previewChange({{ s.id }})">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>间隙大小 (mm)</label>
+                        <input type="number" name="gap_size" step="0.1" value="{{ s.gap_size }}" class="param-input" data-param="gap_size" data-original="{{ s.gap_size }}" oninput="previewChange({{ s.id }})">
+                    </div>
+                    <div class="form-group">
+                        <label>压缩比</label>
+                        <input type="number" name="compression_ratio" step="0.1" value="{{ s.compression_ratio }}" class="param-input" data-param="compression_ratio" data-original="{{ s.compression_ratio }}" oninput="previewChange({{ s.id }})">
+                    </div>
+                    <div class="form-group">
+                        <label>转速 (rpm)</label>
+                        <input type="number" name="rotation_speed" step="1" value="{{ s.rotation_speed }}" class="param-input" data-param="rotation_speed" data-original="{{ s.rotation_speed }}" oninput="previewChange({{ s.id }})">
+                    </div>
+                    <div class="form-group">
+                        <label>进料速率 (kg/h)</label>
+                        <input type="number" name="feed_rate" step="10" value="{{ s.feed_rate }}" class="param-input" data-param="feed_rate" data-original="{{ s.feed_rate }}" oninput="previewChange({{ s.id }})">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>原料含水率 (%)</label>
+                        <input type="number" name="moisture_content" step="1" value="{{ s.moisture_content }}" class="param-input" data-param="moisture_content" data-original="{{ s.moisture_content }}" oninput="previewChange({{ s.id }})">
+                    </div>
+                    <div class="form-group">
+                        <label>操作员</label>
+                        <input type="text" name="operator" placeholder="操作员姓名">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>变更原因</label>
+                    <input type="text" name="change_reason" required placeholder="说明本次修改的原因">
+                </div>
+                <div class="form-group">
+                    <label>描述</label>
+                    <textarea name="description" rows="2">{{ s.description }}</textarea>
+                </div>
+
+                <div id="previewCard-{{ s.id }}" style="display:none;background:#faf6ee;border:1px solid var(--border);border-radius:8px;padding:16px;margin:16px 0">
+                    <h3 style="margin-top:0">🎯 预期效果预览</h3>
+                    <div id="previewContent-{{ s.id }}"></div>
+                </div>
+
+                <div class="action-bar">
+                    <button type="submit" class="btn btn-primary">💾 保存变更</button>
+                    <button type="button" class="btn btn-outline" onclick="toggleEditForm({{ s.id }})">取消</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="action-bar">
+            <button type="button" class="btn btn-sm btn-info" onclick="showChangeHistory({{ s.id }})">📜 查看变更历史</button>
+        </div>
+
+        <div id="historyCard-{{ s.id }}" style="display:none;margin-top:16px"></div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="card">
+        <div class="empty-state">
+            <div class="icon">🏗️</div>
+            <p>暂无结构数据，请先在「参数寻优」页面创建压榨结构</p>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<div id="tab-logs" class="tab-content" style="display:none">
+    {% if change_logs %}
+    <div class="card">
+        <h2>所有变更记录</h2>
+        <table>
+            <thead><tr>
+                <th>时间</th><th>结构</th><th>参数</th><th>变更前</th><th>变更后</th><th>效果</th><th>操作员</th><th>原因</th><th>操作</th>
+            </tr></thead>
+            <tbody>
+                {% for log in change_logs %}
+                <tr>
+                    <td style="font-size:0.85em">{{ (log.created_at or '')[:16] }}</td>
+                    <td><strong>{{ log.structure_name }}</strong></td>
+                    <td>{{ param_labels.get(log.param_name, log.param_name) }}</td>
+                    <td style="font-family:monospace">{{ log.value_before }} {{ param_units.get(log.param_name, '') }}</td>
+                    <td style="font-family:monospace">{{ log.value_after }} {{ param_units.get(log.param_name, '') }}</td>
+                    <td style="font-size:0.82em;max-width:200px">{{ log.effect_description }}</td>
+                    <td>{{ log.operator or '-' }}</td>
+                    <td style="font-size:0.82em;max-width:150px">{{ log.change_reason or '-' }}</td>
+                    <td>
+                        <form method="post" action="/structure-changes/{{ log.id }}/delete" style="display:inline" onsubmit="return confirm('确认删除此变更记录？')">
+                            <button type="submit" class="btn btn-sm btn-danger">删除</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="card">
+        <div class="empty-state">
+            <div class="icon">📋</div>
+            <p>暂无变更记录，修改结构参数后会自动记录</p>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<div id="tab-trends" class="tab-content" style="display:none">
+    <div class="card">
+        <h2>优化趋势分析</h2>
+        <div id="trendChart" class="chart-container"></div>
+        <div id="paramSensitivityChart" class="chart-container"></div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="historyModal">
+    <div class="modal" style="max-width:800px">
+        <h2>参数变更历史</h2>
+        <div id="historyModalContent"></div>
+        <div class="action-bar" style="margin-top:16px">
+            <button type="button" class="btn btn-outline" onclick="closeModal('historyModal')">关闭</button>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function showTab(tabName) {
+    document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+    document.getElementById('tab-' + tabName).style.display = 'block';
+    event.target.classList.add('active');
+    if (tabName === 'trends') {
+        loadTrendCharts();
+    }
+}
+
+function toggleEditForm(structureId) {
+    const form = document.getElementById('editForm-' + structureId);
+    if (form.style.display === 'none') {
+        form.style.display = 'block';
+    } else {
+        form.style.display = 'none';
+        document.getElementById('previewCard-' + structureId).style.display = 'none';
+    }
+}
+
+function previewChange(structureId) {
+    const inputs = document.querySelectorAll('#editForm-' + structureId + ' .param-input');
+    let changed = false;
+    let paramName = null;
+    let valueBefore = null;
+    let valueAfter = null;
+    
+    inputs.forEach(input => {
+        const original = parseFloat(input.dataset.original);
+        const current = parseFloat(input.value);
+        if (Math.abs(original - current) > 1e-9) {
+            changed = true;
+            paramName = input.dataset.param;
+            valueBefore = original;
+            valueAfter = current;
+        }
+    });
+
+    const previewCard = document.getElementById('previewCard-' + structureId);
+    const previewContent = document.getElementById('previewContent-' + structureId);
+
+    if (!changed) {
+        previewCard.style.display = 'none';
+        return;
+    }
+
+    previewCard.style.display = 'block';
+    previewContent.innerHTML = '<div style="color:var(--muted)">正在计算预期效果...</div>';
+
+    fetch('/api/structures/' + structureId + '/compare?param_name=' + paramName + '&value_before=' + valueBefore + '&value_after=' + valueAfter)
+        .then(r => r.json())
+        .then(data => {
+            const effect = data.effect;
+            let html = '<div class="stat-row">';
+            for (const [key, info] of Object.entries(effect.metrics_effect)) {
+                const label = data.metric_labels[key] || key;
+                const unit = data.metric_units[key] || '';
+                const changePct = info.change_pct;
+                const isImprovement = info.is_improvement;
+                const color = changePct === 0 ? 'var(--muted)' : (isImprovement ? 'var(--success)' : 'var(--danger)');
+                const arrow = changePct === 0 ? '→' : (isImprovement ? '↑' : '↓');
+                html += '<div class="stat-card">';
+                html += '<div class="stat-value" style="color:' + color + '">' + arrow + ' ' + (changePct >= 0 ? '+' : '') + changePct.toFixed(1) + '%</div>';
+                html += '<div class="stat-label">' + label + '<br><span style="font-size:0.75em">' + info.value_before.toFixed(2) + unit + ' → ' + info.value_after.toFixed(2) + unit + '</span></div>';
+                html += '</div>';
+            }
+            html += '</div>';
+            html += '<div style="margin-top:8px;padding:8px 12px;background:' + (effect.overall_improvement ? '#e8f5e9' : '#fde8e8') + ';border-radius:6px">';
+            html += '<strong>' + (effect.overall_improvement ? '✅ 预期综合改进' : '⚠️ 预期综合效果下降') + '</strong>';
+            html += '<span style="margin-left:8px;color:var(--muted)">综合分数: ' + effect.fitness_before.toFixed(4) + ' → ' + effect.fitness_after.toFixed(4) + '</span>';
+            html += '</div>';
+            previewContent.innerHTML = html;
+        });
+}
+
+function validateChange(structureId) {
+    const inputs = document.querySelectorAll('#editForm-' + structureId + ' .param-input');
+    let changed = false;
+    inputs.forEach(input => {
+        const original = parseFloat(input.dataset.original);
+        const current = parseFloat(input.value);
+        if (Math.abs(original - current) > 1e-9) {
+            changed = true;
+        }
+    });
+    if (!changed) {
+        alert('未检测到参数变更，请至少修改一个参数');
+        return false;
+    }
+    return true;
+}
+
+function showChangeHistory(structureId) {
+    fetch('/api/structures/' + structureId + '/change-history')
+        .then(r => r.json())
+        .then(data => {
+            const modal = document.getElementById('historyModal');
+            const content = document.getElementById('historyModalContent');
+            if (!data.history || data.history.length === 0) {
+                content.innerHTML = '<div class="empty-state"><p>暂无变更记录</p></div>';
+            } else {
+                let html = '<div style="max-height:60vh;overflow-y:auto">';
+                data.history.forEach((item, idx) => {
+                    const ch = item.change;
+                    const params = item.params_snapshot;
+                    html += '<div style="border-left:3px solid var(--accent);padding-left:16px;margin-bottom:16px">';
+                    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+                    html += '<strong>版本 ' + (idx + 1) + '</strong>';
+                    html += '<span style="color:var(--muted);font-size:0.85em">' + (ch.created_at || '').slice(0, 16) + '</span>';
+                    html += '</div>';
+                    html += '<p style="margin:4px 0"><strong>' + (data.param_labels[ch.param_name] || ch.param_name) + '</strong>: ';
+                    html += ch.value_before + ' → <strong>' + ch.value_after + '</strong>';
+                    html += '</p>';
+                    if (ch.effect_description) {
+                        html += '<p style="margin:4px 0;color:var(--muted);font-size:0.9em">效果: ' + ch.effect_description + '</p>';
+                    }
+                    if (ch.change_reason) {
+                        html += '<p style="margin:4px 0;font-size:0.9em">原因: ' + ch.change_reason + '</p>';
+                    }
+                    html += '<div style="margin-top:8px;padding:8px;background:#faf6ee;border-radius:6px;font-size:0.85em">';
+                    html += '<span style="margin-right:12px">📏 ' + params.screw_diameter + 'mm</span>';
+                    html += '<span style="margin-right:12px">🔩 ' + params.screw_pitch + 'mm</span>';
+                    html += '<span style="margin-right:12px">📐 ' + params.cone_angle + '°</span>';
+                    html += '<span style="margin-right:12px">⚙️ ' + params.compression_ratio + '</span>';
+                    html += '<span style="margin-right:12px">🔄 ' + params.rotation_speed + 'rpm</span>';
+                    html += '</div>';
+                    html += '</div>';
+                });
+                html += '</div>';
+                content.innerHTML = html;
+            }
+            modal.classList.add('show');
+        });
+}
+
+function loadTrendCharts() {
+    const logs = {{ change_logs|tojson }};
+    if (!logs || logs.length === 0) {
+        document.getElementById('trendChart').innerHTML = '<div class="empty-state"><p>暂无变更数据</p></div>';
+        return;
+    }
+
+    const groupedByStructure = {};
+    logs.forEach(log => {
+        if (!groupedByStructure[log.structure_id]) {
+            groupedByStructure[log.structure_id] = [];
+        }
+        groupedByStructure[log.structure_id].push(log);
+    });
+
+    const traces = [];
+    const colors = ['#2980b9', '#e67e22', '#27ae60', '#8e44ad', '#c0392b', '#16a085'];
+    let colorIdx = 0;
+
+    for (const [structId, structLogs] of Object.entries(groupedByStructure)) {
+        structLogs.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+        const x = structLogs.map((l, i) => '变更' + (i + 1));
+        const y = structLogs.map(l => l.juice_yield_after);
+        const structName = structLogs[0].structure_name;
+        traces.push({
+            x: x, y: y, type: 'scatter', mode: 'lines+markers',
+            name: structName, line: { color: colors[colorIdx % colors.length], width: 2 },
+            marker: { size: 8 }
+        });
+        colorIdx++;
+    }
+
+    const layout = {
+        title: '出汁率优化趋势',
+        xaxis: { title: '变更次数' }, yaxis: { title: '出汁率 (%)' },
+        paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+        legend: { orientation: 'h', y: -0.2 }
+    };
+    Plotly.newPlot('trendChart', traces, layout, {responsive: true});
+
+    const paramCount = {};
+    logs.forEach(log => {
+        const param = log.param_name;
+        paramCount[param] = (paramCount[param] || 0) + 1;
+    });
+
+    const paramLabels = {{ param_labels|tojson }};
+    const sensitivityTrace = {
+        x: Object.keys(paramCount).map(p => paramLabels[p] || p),
+        y: Object.values(paramCount),
+        type: 'bar',
+        marker: { color: '#b8860b' }
+    };
+    const sensLayout = {
+        title: '参数调整频次分布',
+        xaxis: { title: '参数名称' }, yaxis: { title: '调整次数' },
+        paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)'
+    };
+    Plotly.newPlot('paramSensitivityChart', [sensitivityTrace], sensLayout, {responsive: true});
+}
+
+function closeModal(modalId) {
+    document.getElementById(modalId).classList.remove('show');
+}
+
+function loadTrackingSummary() {
+    fetch('/api/weirs/{{ weir.id }}/tracking/summary')
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById('totalChanges').textContent = data.total_changes;
+            document.getElementById('improvementRate').textContent = data.improvement_rate + '%';
+            document.getElementById('avgYieldImprove').textContent = (data.avg_yield_improvement >= 0 ? '+' : '') + data.avg_yield_improvement + '%';
+            const paramLabels = {{ param_labels|tojson }};
+            document.getElementById('mostChangedParam').textContent = data.most_changed_param ? (paramLabels[data.most_changed_param] || data.most_changed_param) : '-';
+        });
+}
+
+loadTrackingSummary();
+
+const hash = window.location.hash.substring(1);
+if (hash && hash.startsWith('structure-')) {
+    setTimeout(() => {
+        document.getElementById(hash)?.scrollIntoView({ behavior: 'smooth' });
+    }, 100);
+}
+</script>
+{% endblock %}

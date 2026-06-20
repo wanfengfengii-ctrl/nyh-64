@@ -216,6 +216,169 @@ def init_db():
         )
     """)
 
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS press_structures (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            weir_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            structure_type TEXT NOT NULL DEFAULT 'screw',
+            screw_diameter REAL DEFAULT 0.0,
+            screw_pitch REAL DEFAULT 0.0,
+            screw_lead REAL DEFAULT 0.0,
+            cone_angle REAL DEFAULT 0.0,
+            gap_size REAL DEFAULT 0.0,
+            compression_ratio REAL DEFAULT 0.0,
+            rotation_speed REAL DEFAULT 0.0,
+            feed_rate REAL DEFAULT 0.0,
+            material_type TEXT DEFAULT '',
+            moisture_content REAL DEFAULT 0.0,
+            description TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (weir_id) REFERENCES weirs(id) ON DELETE CASCADE
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS press_experiments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            weir_id INTEGER NOT NULL,
+            structure_id INTEGER,
+            name TEXT NOT NULL,
+            status TEXT DEFAULT 'draft',
+            juice_yield REAL DEFAULT 0.0,
+            peak_pressure REAL DEFAULT 0.0,
+            residue_moisture REAL DEFAULT 0.0,
+            steady_juice_time REAL DEFAULT 0.0,
+            energy_consumption REAL DEFAULT 0.0,
+            throughput REAL DEFAULT 0.0,
+            experiment_date TEXT,
+            operator TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (weir_id) REFERENCES weirs(id) ON DELETE CASCADE,
+            FOREIGN KEY (structure_id) REFERENCES press_structures(id) ON DELETE SET NULL
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS optimization_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            weir_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            status TEXT DEFAULT 'pending',
+            algorithm TEXT DEFAULT 'genetic',
+            target_juice_yield_weight REAL DEFAULT 0.3,
+            target_peak_pressure_weight REAL DEFAULT 0.25,
+            target_residue_moisture_weight REAL DEFAULT 0.25,
+            target_steady_time_weight REAL DEFAULT 0.2,
+            param_ranges TEXT DEFAULT '',
+            population_size INTEGER DEFAULT 50,
+            max_iterations INTEGER DEFAULT 100,
+            mutation_rate REAL DEFAULT 0.1,
+            crossover_rate REAL DEFAULT 0.8,
+            best_solution_id INTEGER,
+            progress INTEGER DEFAULT 0,
+            started_at TIMESTAMP,
+            completed_at TIMESTAMP,
+            error_message TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (weir_id) REFERENCES weirs(id) ON DELETE CASCADE,
+            FOREIGN KEY (best_solution_id) REFERENCES press_structures(id) ON DELETE SET NULL
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS optimization_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL,
+            iteration INTEGER DEFAULT 0,
+            structure_params TEXT DEFAULT '',
+            juice_yield REAL DEFAULT 0.0,
+            peak_pressure REAL DEFAULT 0.0,
+            residue_moisture REAL DEFAULT 0.0,
+            steady_juice_time REAL DEFAULT 0.0,
+            fitness_score REAL DEFAULT 0.0,
+            rank INTEGER DEFAULT 0,
+            is_pareto INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (task_id) REFERENCES optimization_tasks(id) ON DELETE CASCADE
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS scheme_rankings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            weir_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            ranking_method TEXT DEFAULT 'topsis',
+            juice_yield_weight REAL DEFAULT 0.3,
+            peak_pressure_weight REAL DEFAULT 0.25,
+            residue_moisture_weight REAL DEFAULT 0.25,
+            steady_time_weight REAL DEFAULT 0.2,
+            scheme_ids TEXT DEFAULT '',
+            ranking_results TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (weir_id) REFERENCES weirs(id) ON DELETE CASCADE
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS structure_change_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            structure_id INTEGER NOT NULL,
+            change_type TEXT NOT NULL,
+            param_name TEXT NOT NULL,
+            value_before REAL,
+            value_after REAL,
+            juice_yield_before REAL,
+            juice_yield_after REAL,
+            peak_pressure_before REAL,
+            peak_pressure_after REAL,
+            residue_moisture_before REAL,
+            residue_moisture_after REAL,
+            steady_time_before REAL,
+            steady_time_after REAL,
+            effect_description TEXT DEFAULT '',
+            operator TEXT DEFAULT '',
+            change_reason TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (structure_id) REFERENCES press_structures(id) ON DELETE CASCADE
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS report_comparisons (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            weir_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            experiment_ids TEXT DEFAULT '',
+            comparison_type TEXT DEFAULT 'side_by_side',
+            include_metrics TEXT DEFAULT '',
+            report_content TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (weir_id) REFERENCES weirs(id) ON DELETE CASCADE
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS experiment_reviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            weir_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            experiment_ids TEXT DEFAULT '',
+            review_type TEXT DEFAULT 'full',
+            success_summary TEXT DEFAULT '',
+            issue_summary TEXT DEFAULT '',
+            lesson_learned TEXT DEFAULT '',
+            improvement_suggestions TEXT DEFAULT '',
+            key_findings TEXT DEFAULT '',
+            reviewer TEXT DEFAULT '',
+            reviewed_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (weir_id) REFERENCES weirs(id) ON DELETE CASCADE
+        )
+    """)
+
     def _has_column(table, col):
         rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
         return any(r[1] == col for r in rows)

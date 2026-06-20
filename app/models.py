@@ -271,3 +271,164 @@ class ScheduleLogQuery(BaseModel):
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     operator: Optional[str] = None
+
+STRUCTURE_TYPES = ["screw", "roller", "hydraulic", "pneumatic", "basket"]
+STRUCTURE_TYPE_LABELS = {
+    "screw": "螺旋压榨",
+    "roller": "辊式压榨",
+    "hydraulic": "液压压榨",
+    "pneumatic": "气动压榨",
+    "basket": "篮式压榨",
+}
+
+OPTIMIZATION_ALGORITHMS = ["genetic", "particle_swarm", "grid_search", "random_search", "nsga2"]
+OPTIMIZATION_ALGORITHM_LABELS = {
+    "genetic": "遗传算法",
+    "particle_swarm": "粒子群优化",
+    "grid_search": "网格搜索",
+    "random_search": "随机搜索",
+    "nsga2": "NSGA-II多目标优化",
+}
+
+RANKING_METHODS = ["topsis", "ahp", "electre", "weighted_sum", "viikor"]
+RANKING_METHOD_LABELS = {
+    "topsis": "TOPSIS优劣解距离法",
+    "ahp": "层次分析法",
+    "electre": "ELECTRE消去选择法",
+    "weighted_sum": "加权求和法",
+    "viikor": "VIKOR妥协排序法",
+}
+
+class PressStructureCreate(BaseModel):
+    weir_id: int
+    name: str
+    structure_type: str = "screw"
+    screw_diameter: float = 0.0
+    screw_pitch: float = 0.0
+    screw_lead: float = 0.0
+    cone_angle: float = 0.0
+    gap_size: float = 0.0
+    compression_ratio: float = 0.0
+    rotation_speed: float = 0.0
+    feed_rate: float = 0.0
+    material_type: str = ""
+    moisture_content: float = 0.0
+    description: str = ""
+
+    @field_validator("structure_type")
+    @classmethod
+    def structure_type_valid(cls, v):
+        if v not in STRUCTURE_TYPES:
+            raise ValueError("结构类型必须是 " + ", ".join(STRUCTURE_TYPES) + " 之一")
+        return v
+
+class PressStructureUpdate(BaseModel):
+    name: Optional[str] = None
+    structure_type: Optional[str] = None
+    screw_diameter: Optional[float] = None
+    screw_pitch: Optional[float] = None
+    screw_lead: Optional[float] = None
+    cone_angle: Optional[float] = None
+    gap_size: Optional[float] = None
+    compression_ratio: Optional[float] = None
+    rotation_speed: Optional[float] = None
+    feed_rate: Optional[float] = None
+    material_type: Optional[str] = None
+    moisture_content: Optional[float] = None
+    description: Optional[str] = None
+
+class PressExperimentCreate(BaseModel):
+    weir_id: int
+    structure_id: Optional[int] = None
+    name: str
+    status: str = "draft"
+    juice_yield: float = 0.0
+    peak_pressure: float = 0.0
+    residue_moisture: float = 0.0
+    steady_juice_time: float = 0.0
+    energy_consumption: float = 0.0
+    throughput: float = 0.0
+    experiment_date: Optional[str] = None
+    operator: str = ""
+    notes: str = ""
+
+class OptimizationTaskCreate(BaseModel):
+    weir_id: int
+    name: str
+    algorithm: str = "genetic"
+    target_juice_yield_weight: float = 0.3
+    target_peak_pressure_weight: float = 0.25
+    target_residue_moisture_weight: float = 0.25
+    target_steady_time_weight: float = 0.2
+    param_ranges: str = ""
+    population_size: int = 50
+    max_iterations: int = 100
+    mutation_rate: float = 0.1
+    crossover_rate: float = 0.8
+
+    @field_validator("algorithm")
+    @classmethod
+    def algorithm_valid(cls, v):
+        if v not in OPTIMIZATION_ALGORITHMS:
+            raise ValueError("优化算法必须是 " + ", ".join(OPTIMIZATION_ALGORITHMS) + " 之一")
+        return v
+
+    @field_validator("population_size", "max_iterations")
+    @classmethod
+    def positive_integer(cls, v):
+        if v <= 0:
+            raise ValueError("必须为正整数")
+        return v
+
+    @field_validator("mutation_rate", "crossover_rate")
+    @classmethod
+    def ratio_range(cls, v):
+        if v < 0 or v > 1:
+            raise ValueError("比率必须在0-1之间")
+        return v
+
+class SchemeRankingCreate(BaseModel):
+    weir_id: int
+    name: str
+    ranking_method: str = "topsis"
+    juice_yield_weight: float = 0.3
+    peak_pressure_weight: float = 0.25
+    residue_moisture_weight: float = 0.25
+    steady_time_weight: float = 0.2
+    scheme_ids: str = ""
+
+    @field_validator("ranking_method")
+    @classmethod
+    def method_valid(cls, v):
+        if v not in RANKING_METHODS:
+            raise ValueError("排序方法必须是 " + ", ".join(RANKING_METHODS) + " 之一")
+        return v
+
+class StructureChangeCreate(BaseModel):
+    structure_id: int
+    change_type: str
+    param_name: str
+    value_before: Optional[float] = None
+    value_after: Optional[float] = None
+    effect_description: str = ""
+    operator: str = ""
+    change_reason: str = ""
+
+class ReportComparisonCreate(BaseModel):
+    weir_id: int
+    name: str
+    experiment_ids: str = ""
+    comparison_type: str = "side_by_side"
+    include_metrics: str = ""
+
+class ExperimentReviewCreate(BaseModel):
+    weir_id: int
+    name: str
+    experiment_ids: str = ""
+    review_type: str = "full"
+    success_summary: str = ""
+    issue_summary: str = ""
+    lesson_learned: str = ""
+    improvement_suggestions: str = ""
+    key_findings: str = ""
+    reviewer: str = ""

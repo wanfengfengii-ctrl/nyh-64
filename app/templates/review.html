@@ -1,0 +1,339 @@
+{% extends "base.html" %}
+{% block title %}实验过程复盘 - {{ weir.name }}{% endblock %}
+{% block nav_weirs %}class="active"{% endblock %}
+{% block content %}
+<h1>实验过程复盘 — {{ weir.name }}</h1>
+<p style="margin-bottom:16px">
+    <a href="/weirs/{{ weir.id }}/schemes" class="btn btn-sm btn-info">分水方案</a>
+    <a href="/weirs/{{ weir.id }}/optimization" class="btn btn-sm btn-info">🎯 参数寻优</a>
+    <a href="/weirs/{{ weir.id }}/tracking" class="btn btn-sm btn-info">📊 结构改动追踪</a>
+    <a href="/weirs/{{ weir.id }}/compare" class="btn btn-sm btn-info">📈 报告对比</a>
+    <a href="/weirs" class="btn btn-sm btn-outline">返回堰坝列表</a>
+</p>
+
+<div class="card">
+    <h2>快速预览</h2>
+    <div class="form-row">
+        <div class="form-group">
+            <label>复盘类型</label>
+            <select id="previewReviewType">
+                {% for key, label in review_type_labels.items() %}
+                <option value="{{ key }}">{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group" style="align-self:flex-end">
+            <button type="button" class="btn btn-info" onclick="previewReview()">🔍 预览分析</button>
+        </div>
+    </div>
+    <div id="previewContent" style="margin-top:16px"></div>
+</div>
+
+<div class="card">
+    <h2>创建复盘报告</h2>
+    {% if experiments %}
+    <form method="post" action="/weirs/{{ weir.id }}/reviews" onsubmit="return validateReview()">
+        <div class="form-row">
+            <div class="form-group">
+                <label>复盘名称</label>
+                <input type="text" name="name" required placeholder="如：2024年第一季度实验复盘">
+            </div>
+            <div class="form-group">
+                <label>复盘类型</label>
+                <select name="review_type">
+                    {% for key, label in review_type_labels.items() %}
+                    <option value="{{ key }}">{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label>复盘人</label>
+                <input type="text" name="reviewer" placeholder="复盘人姓名">
+            </div>
+        </div>
+
+        <h3 style="margin-top:16px">选择实验（可选，留空则复盘全部）</h3>
+        <div style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:12px">
+            {% for e in experiments %}
+            <div class="check-row">
+                <input type="checkbox" name="review_checkbox" value="{{ e.id }}" id="review-check-{{ e.id }}" class="review-checkbox">
+                <label for="review-check-{{ e.id }}" style="flex:1;cursor:pointer">
+                    <strong>{{ e.name }}</strong>
+                    <span style="color:var(--muted);font-size:0.85em;margin-left:12px">
+                        出汁率:{{ e.juice_yield }}% | 压力:{{ e.peak_pressure }}MPa
+                    </span>
+                </label>
+            </div>
+            {% endfor %}
+        </div>
+        <input type="hidden" name="experiment_ids" id="experimentIdsInput">
+
+        <h3 style="margin-top:16px">补充说明（可选，将覆盖自动分析</h3>
+        <div class="form-group">
+            <label>成功经验总结</label>
+            <textarea name="success_summary" rows="2" placeholder="本次实验的成功之处..."></textarea>
+        </div>
+        <div class="form-group">
+            <label>问题与不足</label>
+            <textarea name="issue_summary" rows="2" placeholder="存在的问题与不足..."></textarea>
+        </div>
+        <div class="form-group">
+            <label>经验教训</label>
+            <textarea name="lesson_learned" rows="2" placeholder="从实验中得到的经验教训..."></textarea>
+        </div>
+        <div class="form-group">
+            <label>改进建议</label>
+            <textarea name="improvement_suggestions" rows="2" placeholder="对后续实验的改进建议..."></textarea>
+        </div>
+        <div class="form-group">
+            <label>关键发现</label>
+            <textarea name="key_findings" rows="2" placeholder="实验中的关键发现..."></textarea>
+        </div>
+
+        <button type="submit" class="btn btn-primary" style="margin-top:12px">📝 生成复盘报告</button>
+    </form>
+    {% else %}
+    <div class="empty-state">
+        <div class="icon">📝</div>
+        <p>暂无实验数据，请先在「参数寻优」页面创建实验记录</p>
+    </div>
+    {% endif %}
+</div>
+
+{% if reviews %}
+<div class="card">
+    <h2>复盘记录</h2>
+    <table>
+        <thead><tr>
+            <th>名称</th><th>类型</th><th>实验数</th><th>复盘人</th><th>创建时间</th><th>操作</th>
+        </tr></thead>
+        <tbody>
+            {% for r in reviews %}
+            <tr id="review-{{ r.id }}">
+                <td><strong>{{ r.name }}</strong></td>
+                <td>{{ review_type_labels.get(r.review_type, r.review_type) }}</td>
+                <td>{{ r.experiment_ids.split(',')|length if r.experiment_ids else experiments|length }}</td>
+                <td>{{ r.reviewer or '-' }}</td>
+                <td style="font-size:0.85em">{{ (r.created_at or '')[:16] }}</td>
+                <td>
+                    <button type="button" class="btn btn-sm btn-info" onclick="showReviewResults({{ r.id }})">查看</button>
+                    <form method="post" action="/reviews/{{ r.id }}/delete" style="display:inline" onsubmit="return confirm('确认删除此复盘？')">
+                        <button type="submit" class="btn btn-sm btn-danger">删除</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<div class="card" id="reviewResultsCard" style="display:none">
+    <h2>复盘报告</h2>
+    <div id="reviewResultsContent"></div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function validateReview() {
+    const checked = document.querySelectorAll('.review-checkbox:checked');
+    const ids = Array.from(checked).map(cb => cb.value).join(',');
+    document.getElementById('experimentIdsInput').value = ids;
+    return true;
+}
+
+function previewReview() {
+    const reviewType = document.getElementById('previewReviewType').value;
+    const content = document.getElementById('previewContent');
+    content.innerHTML = '<div class="empty-state"><p>正在分析...</p></div>';
+    
+    fetch('/api/weirs/{{ weir.id }}/review/preview?review_type=' + reviewType)
+        .then(r => r.json())
+        .then(data => {
+            if (!data.analysis) {
+                content.innerHTML = '<div class="empty-state"><p>' + data.message + '</p></div>';
+                return;
+            }
+            renderReviewResults(data, content, true);
+        });
+}
+
+function showReviewResults(reviewId) {
+    fetch('/api/reviews/' + reviewId + '/results')
+        .then(r => r.json())
+        .then(data => {
+            const card = document.getElementById('reviewResultsCard');
+            const content = document.getElementById('reviewResultsContent');
+            card.style.display = 'block';
+            renderReviewResults(data, content);
+            card.scrollIntoView({ behavior: 'smooth' });
+        });
+}
+
+function renderReviewResults(data, container, isPreview) {
+    const analysis = data.analysis;
+    const timeline = data.timeline;
+    
+    let html = '';
+    
+    if (analysis.overall_assessment) {
+        const assessment = analysis.overall_assessment;
+        const assessmentLabel = data.assessment_labels ? data.assessment_labels[assessment] || assessment : assessment;
+        html += '<div class="stat-row">';
+        html += '<div class="stat-card"><div class="stat-value">' + (data.total_experiments || data.experiments.length) + '</div><div class="stat-label">复盘实验数</div></div>';
+        html += '<div class="stat-card"><div class="stat-value">' + assessmentLabel + '</div><div class="stat-label">综合评价</div></div>';
+        if (analysis.avg_yield) {
+            html += '<div class="stat-card"><div class="stat-value">' + analysis.avg_yield.toFixed(2) + '%</div><div class="stat-label">平均出汁率</div></div>';
+        }
+        if (analysis.yield_improvement !== undefined) {
+            const color = analysis.yield_improvement >= 0 ? 'var(--success)' : 'var(--danger)';
+            html += '<div class="stat-card"><div class="stat-value" style="color:' + color + '">' + (analysis.yield_improvement >= 0 ? '+' : '') + analysis.yield_improvement.toFixed(2) + '%</div><div class="stat-label">出汁率提升</div></div>';
+        }
+        html += '</div>';
+    }
+    
+    if (analysis.success_summary) {
+        html += '<div class="card" style="background:#e8f5e9;border:none;margin-bottom:12px 0">';
+        html += '<h3 style="color:var(--success);margin-top:0">✅ 成功经验总结</h3>';
+        html += '<p style="margin:0">' + analysis.success_summary + '</p>';
+        html += '</div>';
+    }
+    
+    if (analysis.issue_summary) {
+        html += '<div class="card" style="background:#fde8e8;border:none;margin-bottom:12px 0">';
+        html += '<h3 style="color:var(--danger);margin-top:0">⚠️ 问题与不足</h3>';
+        html += '<p style="margin:0">' + analysis.issue_summary + '</p>';
+        html += '</div>';
+    }
+    
+    if (analysis.lesson_learned) {
+        html += '<div class="card" style="background:#fff3cd;border:none;margin-bottom:12px 0">';
+        html += '<h3 style="color:#856404;margin-top:0">📚 经验教训</h3>';
+        html += '<p style="margin:0">' + analysis.lesson_learned + '</p>';
+        html += '</div>';
+    }
+    
+    if (analysis.key_findings && analysis.key_findings.length > 0) {
+        html += '<h3 style="margin-top:16px">🔍 关键发现</h3>';
+        html += '<div style="background:#f0ead8;border-radius:6px;padding:12px">';
+        analysis.key_findings.forEach(finding => {
+            html += '<p style="margin:4px 0">• ' + finding + '</p>';
+        });
+        html += '</div>';
+    }
+    
+    if (analysis.improvement_suggestions && analysis.improvement_suggestions.length > 0) {
+        html += '<h3 style="margin-top:16px">💡 改进建议</h3>';
+        html += '<table><thead><tr><th>优先级</th><th>建议内容</th><th>预期效果</th></tr></thead><tbody>';
+        analysis.improvement_suggestions.forEach(s => {
+            const priorityLabel = data.priority_labels ? data.priority_labels[s.priority] || s.priority : s.priority;
+            const badgeClass = s.priority === 'high' ? 'badge-draft' : (s.priority === 'medium' ? 'badge-draft' : '');
+            html += '<tr><td><span class="badge ' + badgeClass + '">' + priorityLabel + '</span></td>';
+            html += '<td>' + s.content + '</td>';
+            html += '<td style="color:var(--muted);font-size:0.9em">' + s.expected_improvement + '</td></tr>';
+        });
+        html += '</tbody></table>';
+    }
+    
+    if (timeline && timeline.length > 0) {
+        html += '<h3 style="margin-top:16px">📈 实验时间线</h3>';
+        html += '<div id="timelineChart" class="chart-container"></div>';
+        html += '<div style="max-height:300px;overflow-y:auto">';
+        timeline.forEach((t, idx) => {
+            html += '<div style="border-left:3px solid var(--accent);padding-left:16px;margin-bottom:12px 0">';
+            html += '<div style="display:flex;justify-content:space-between;align-items:center">';
+            html += '<strong>步骤 ' + t.step + ': ' + t.experiment_name + '</strong>';
+            html += '<span style="color:var(--muted);font-size:0.85em">' + (t.date || '').slice(0, 16) + '</span>';
+            html += '</div>';
+            html += '<div style="margin-top:4px">';
+            html += '<span style="margin-right:12px">📊 出汁率: ' + t.metrics.juice_yield + '%</span>';
+            html += '<span style="margin-right:12px">⚡ 压力: ' + t.metrics.peak_pressure + 'MPa</span>';
+            html += '<span style="margin-right:12px">💧 残渣: ' + t.metrics.residue_moisture + '%</span>';
+            html += '<span>⏱️ 时间: ' + t.metrics.steady_juice_time + 's</span>';
+            html += '</div>';
+            if (t.fitness !== undefined) {
+                html += '<div style="margin-top:4px;color:var(--muted);font-size:0.85em">适应度: ' + t.fitness.toFixed(4) + '</div>';
+            }
+            if (t.notes) {
+                html += '<div style="margin-top:4px;font-size:0.9em">📝 ' + t.notes + '</div>';
+            }
+            html += '</div>';
+        });
+        html += '</div>';
+    }
+    
+    container.innerHTML = html;
+    
+    if (timeline && timeline.length > 1) {
+        const traces = [];
+        const metricKeys = ['juice_yield', 'peak_pressure', 'residue_moisture', 'steady_juice_time'];
+        const metricLabels = data.metric_labels || {
+            juice_yield: '出汁率', peak_pressure: '峰值压力',
+            residue_moisture: '残渣含水率', steady_juice_time: '稳定出汁时间'
+        };
+        const colors = ['#27ae60', '#e74c3c', '#f39c12', '#3498db'];
+        
+        metricKeys.forEach((mk, mi) => {
+            traces.push({
+                x: timeline.map((t, i) => 'Step ' + (i + 1),
+                y: timeline.map(t => t.metrics[mk]),
+                mode: 'lines+markers',
+                name: metricLabels[mk],
+                line: { color: colors[mi % colors.length], width: 2 },
+                marker: { size: 8 }
+            });
+        });
+        
+        const fitnessTrace = {
+            x: timeline.map((t, i) => 'Step ' + (i + 1),
+            y: timeline.map(t => t.fitness * 100),
+            mode: 'lines+markers',
+            name: '综合适应度 (×100)',
+            line: { color: '#8e44ad', width: 3, dash: 'dash' },
+            yaxis: 'y2'
+        };
+        traces.push(fitnessTrace);
+        
+        const layout = {
+            title: '实验过程指标变化趋势',
+            xaxis: { title: '实验步骤' },
+            yaxis: { title: '指标值' },
+            yaxis2: {
+                title: '适应度分数',
+                overlaying: 'y',
+                side: 'right'
+            },
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            legend: { orientation: 'h', y: -0.2 }
+        };
+        
+        setTimeout(() => {
+            Plotly.newPlot('timelineChart', traces, layout, {responsive: true});
+        }, 100);
+    }
+    
+    if (!isPreview && data.review) {
+        html += '<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">';
+        html += '<p style="color:var(--muted);font-size:0.9em">';
+        if (data.review.reviewer) {
+            html += '<strong>复盘人:</strong> ' + data.review.reviewer + ' | ';
+        }
+        if (data.review.reviewed_at) {
+            html += '<strong>复盘时间:</strong> ' + (data.review.reviewed_at).slice(0, 16);
+        }
+        html += '</p>';
+        html += '</div>';
+        container.innerHTML += html;
+    }
+}
+
+const hash = window.location.hash.substring(1);
+if (hash && hash.startsWith('review-')) {
+    const id = hash.replace('review-', '');
+    setTimeout(() => showReviewResults(parseInt(id)), 100);
+}
+</script>
+{% endblock %}

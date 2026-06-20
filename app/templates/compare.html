@@ -1,0 +1,332 @@
+{% extends "base.html" %}
+{% block title %}报告联动对比 - {{ weir.name }}{% endblock %}
+{% block nav_weirs %}class="active"{% endblock %}
+{% block content %}
+<h1>报告联动对比 — {{ weir.name }}</h1>
+<p style="margin-bottom:16px">
+    <a href="/weirs/{{ weir.id }}/schemes" class="btn btn-sm btn-info">分水方案</a>
+    <a href="/weirs/{{ weir.id }}/optimization" class="btn btn-sm btn-info">🎯 参数寻优</a>
+    <a href="/weirs/{{ weir.id }}/tracking" class="btn btn-sm btn-info">📊 结构改动追踪</a>
+    <a href="/weirs/{{ weir.id }}/review" class="btn btn-sm btn-info">📝 实验复盘</a>
+    <a href="/weirs" class="btn btn-sm btn-outline">返回堰坝列表</a>
+</p>
+
+<div class="card">
+    <h2>创建对比报告</h2>
+    {% if experiments and experiments|length >= 2 %}
+    <form method="post" action="/weirs/{{ weir.id }}/comparisons" onsubmit="return validateComparison()">
+        <div class="form-row">
+            <div class="form-group">
+            <label>对比名称</label>
+            <input type="text" name="name" required placeholder="如：2024年第一季度对比">
+        </div>
+        <div class="form-group">
+            <label>对比类型</label>
+            <select name="comparison_type">
+                {% for key, label in comparison_type_labels.items() %}
+                <option value="{{ key }}">{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+        <h3 style="margin-top:16px">选择要对比的指标（可选，留空则对比全部）</h3>
+    <div class="form-row">
+            <div class="check-row">
+            <label><input type="checkbox" class="metric-checkbox" value="juice_yield"> 出汁率</label>
+            <label><input type="checkbox" class="metric-checkbox" value="peak_pressure"> 峰值压力</label>
+            <label><input type="checkbox" class="metric-checkbox" value="residue_moisture"> 残渣含水率</label>
+            <label><input type="checkbox" class="metric-checkbox" value="steady_juice_time"> 稳定出汁时间</label>
+            <label><input type="checkbox" class="metric-checkbox" value="energy_consumption"> 能耗</label>
+            <label><input type="checkbox" class="metric-checkbox" value="throughput"> 处理量</label>
+        </div>
+    </div>
+    <input type="hidden" name="include_metrics" id="includeMetricsInput">
+        <h3 style="margin-top:16px">选择实验方案（至少2个）</h3>
+    <div style="max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:12px">
+            {% for e in experiments %}
+        <div class="check-row">
+            <input type="checkbox" name="experiment_checkbox" value="{{ e.id }}" id="exp-check-{{ e.id }}" class="exp-checkbox">
+            <label for="exp-check-{{ e.id }}" style="flex:1;cursor:pointer">
+                <strong>{{ e.name }}</strong>
+                <span style="color:var(--muted);font-size:0.85em;margin-left:12px">
+                    出汁率:{{ e.juice_yield }}% | 压力:{{ e.peak_pressure }}MPa | 残渣:{{ e.residue_moisture }}%
+                    {% if e.structure_id and structure_map.get(e.structure_id) %}
+                    | 结构:{{ structure_map[e.structure_id].name }}
+                    {% endif %}
+                </span>
+            </label>
+        </div>
+        {% endfor %}
+    </div>
+    <input type="hidden" name="experiment_ids" id="experimentIdsInput">
+    <button type="submit" class="btn btn-primary">📊 创建对比</button>
+    </form>
+    {% else %}
+    <div class="empty-state">
+        <div class="icon">📈</div>
+        <p>需要至少2个实验记录才能进行对比，请先在「参数寻优」页面创建更多实验</p>
+    </div>
+    {% endif %}
+</div>
+
+{% if comparisons %}
+<div class="card">
+    <h2>对比记录</h2>
+    <table>
+        <thead><tr>
+            <th>名称</th><th>类型</th><th>实验数</th><th>创建时间</th><th>操作</th>
+        </tr></thead>
+        <tbody>
+            {% for c in comparisons %}
+            <tr id="comparison-{{ c.id }}">
+                <td><strong>{{ c.name }}</strong></td>
+                <td>{{ comparison_type_labels.get(c.comparison_type, c.comparison_type) }}</td>
+                <td>{{ c.experiment_ids.split(',')|length if c.experiment_ids else 0 }}</td>
+                <td style="font-size:0.85em">{{ (c.created_at or '')[:16] }}</td>
+                <td>
+                    <button type="button" class="btn btn-sm btn-info" onclick="showComparisonResults({{ c.id }})">查看</button>
+                    <form method="post" action="/comparisons/{{ c.id }}/delete" style="display:inline" onsubmit="return confirm('确认删除此对比？')">
+                        <button type="submit" class="btn btn-sm btn-danger">删除</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<div class="card" id="comparisonResultsCard" style="display:none">
+    <h2>对比结果</h2>
+    <div id="comparisonResultsContent"></div>
+</div>
+
+{% if experiments and experiments|length >= 2 %}
+<div class="card">
+    <h2>快速对比</h2>
+    <p style="color:var(--muted);font-size:0.9em;margin-bottom:12px">选择多个实验即时对比，无需保存</p>
+    <div style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:12px">
+        {% for e in experiments %}
+        <div class="check-row">
+            <input type="checkbox" value="{{ e.id }}" id="quick-check-{{ e.id }}" class="quick-exp-checkbox">
+            <label for="quick-check-{{ e.id }}" style="flex:1;cursor:pointer">
+                <strong>{{ e.name }}</strong>
+            </label>
+        </div>
+        {% endfor %}
+    </div>
+    <button type="button" class="btn btn-info btn-sm" onclick="runQuickComparison()">⚡ 快速对比</button>
+</div>
+{% endif %}
+
+<div class="modal-overlay" id="quickComparisonModal">
+    <div class="modal" style="max-width:900px">
+        <h2>快速对比结果</h2>
+        <div id="quickComparisonContent"></div>
+        <div class="action-bar" style="margin-top:16px">
+            <button type="button" class="btn btn-outline" onclick="closeModal('quickComparisonModal')">关闭</button>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function validateComparison() {
+    const checked = document.querySelectorAll('.exp-checkbox:checked');
+    if (checked.length < 2) {
+        alert('请至少选择2个实验进行对比');
+        return false;
+    }
+    const ids = Array.from(checked).map(cb => cb.value).join(',');
+    document.getElementById('experimentIdsInput').value = ids;
+    
+    const metricsChecked = document.querySelectorAll('.metric-checkbox:checked');
+    if (metricsChecked.length > 0) {
+        const metrics = Array.from(metricsChecked).map(cb => cb.value).join(',');
+        document.getElementById('includeMetricsInput').value = metrics;
+    }
+    return true;
+}
+
+function showComparisonResults(comparisonId) {
+    fetch('/api/comparisons/' + comparisonId + '/results')
+        .then(r => r.json())
+        .then(data => {
+            const card = document.getElementById('comparisonResultsCard');
+            const content = document.getElementById('comparisonResultsContent');
+            card.style.display = 'block';
+            renderComparisonResults(data, content);
+            card.scrollIntoView({ behavior: 'smooth' });
+        });
+}
+
+function runQuickComparison() {
+    const checked = document.querySelectorAll('.quick-exp-checkbox:checked');
+    if (checked.length < 2) {
+        alert('请至少选择2个实验进行对比');
+        return;
+    }
+    const ids = Array.from(checked).map(cb => cb.value).join(',');
+    fetch('/api/weirs/{{ weir.id }}/experiments/compare?experiment_ids=' + ids)
+        .then(r => r.json())
+        .then(data => {
+            const modal = document.getElementById('quickComparisonModal');
+            const content = document.getElementById('quickComparisonContent');
+            renderComparisonResults(data, content, true);
+            modal.classList.add('show');
+        });
+}
+
+function renderComparisonResults(data, container, isQuick) {
+    const results = data.results || data.comparison;
+    const experiments = data.experiments;
+    const compType = isQuick ? 'side_by_side' : data.comparison.comparison_type;
+    
+    let html = '';
+    
+    if (results.summary) {
+        html += '<div class="stat-row">';
+        if (results.summary.best_overall) {
+            html += '<div class="stat-card"><div class="stat-value" style="color:var(--success)">' + results.summary.best_overall.experiment_name + '</div><div class="stat-label">🏆 综合最优方案</div></div>';
+        }
+        if (results.summary.best_yield) {
+            html += '<div class="stat-card"><div class="stat-value">' + results.summary.best_yield.experiment_name + '</div><div class="stat-label">🥇 出汁率最高</div></div>';
+        }
+        if (results.summary.lowest_pressure) {
+            html += '<div class="stat-card"><div class="stat-value">' + results.summary.lowest_pressure.experiment_name + '</div><div class="stat-label">🥇 压力最低</div></div>';
+        }
+        html += '</div>';
+    }
+    
+    if (results.metric_comparison) {
+        html += '<h3>指标对比</h3>';
+        html += '<table><thead><tr><th>指标</th>';
+        experiments.forEach(e => {
+            html += '<th>' + e.name + '</th>';
+        });
+        html += '<th>差异范围</th></tr></thead><tbody>';
+        for (const [metric, comp of Object.entries(results.metric_comparison)) {
+            const label = data.metric_labels[metric] || metric;
+            const unit = data.metric_units[metric] || '';
+            const objective = data.metric_objectives[metric];
+            html += '<tr><td><strong>' + label + '</strong><br><span style="color:var(--muted);font-size:0.8em">目标: ' + (objective === 'maximize' ? '最大化' : '最小化') + '</span></td>';
+            experiments.forEach(e => {
+                const val = e[metric];
+                const isBest = comp.best_value === val;
+                html += '<td style="font-family:monospace' + (isBest ? ';font-weight:700;color:var(--success)' : '') + '">' + val + unit + (isBest ? ' ✅' : '') + '</td>';
+            });
+            html += '<td style="font-family:monospace">' + comp.min_value.toFixed(2) + ' ~ ' + comp.max_value.toFixed(2) + unit + '<br><span style="color:var(--muted);font-size:0.8em">差异: ' + comp.difference.toFixed(2) + unit + '</span></td></tr>';
+        }
+        html += '</tbody></table>';
+    }
+    
+    if (results.detailed_comparison) {
+        html += '<div id="comparisonRadarChart" class="chart-container"></div>';
+        html += '<div id="comparisonBarChart" class="chart-container"></div>';
+        html += '<div id="comparisonTrendChart" class="chart-container"></div>';
+    }
+    
+    container.innerHTML = html;
+    
+    if (results.detailed_comparison && experiments.length >= 2) {
+        const metricKeys = ['juice_yield', 'peak_pressure', 'residue_moisture', 'steady_juice_time'];
+        const metricLabels = data.metric_labels;
+        const traces = [];
+        const colors = ['#2980b9', '#e67e22', '#27ae60', '#8e44ad', '#c0392b'];
+        experiments.forEach((e, idx) => {
+            const values = metricKeys.map(k => {
+                const val = e[k];
+                if (k === 'peak_pressure' || k === 'residue_moisture' || k === 'steady_juice_time') {
+                    return 100 - Math.min(100, val * 5);
+                }
+                return val;
+            });
+            traces.push({
+                type: 'scatterpolar', r: values,
+                theta: metricKeys.map(k => metricLabels[k]),
+                fill: 'toself', name: e.name,
+                opacity: 0.6,
+                line: { color: colors[idx % colors.length] }
+            });
+        });
+        const radarLayout = {
+            title: '雷达图对比',
+            polar: { radialaxis: { visible: true, range: [0, 100] },
+            paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+            legend: { orientation: 'h', y: -0.15 }
+        };
+        setTimeout(() => {
+            Plotly.newPlot('comparisonRadarChart', traces, radarLayout, {responsive: true});
+        }, 100);
+        }
+        const barTraces = [];
+        metricKeys.forEach((mk, mi) => {
+            barTraces.push({
+                x: experiments.map(e => e.name),
+                y: experiments.map(e => e[mk]),
+                name: metricLabels[mk],
+                type: 'bar',
+                marker: { color: colors[mi % colors.length] },
+            });
+        });
+        const barLayout = {
+            title: '各项指标柱状图对比',
+            barmode: 'group',
+            paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+            legend: { orientation: 'h', y: -0.15 }
+        };
+        setTimeout(() => {
+            Plotly.newPlot('comparisonBarChart', barTraces, barLayout, {responsive: true});
+        }, 200);
+        }
+        
+        if (experiments.length >= 2) {
+            const trendX = experiments.map((e, i) => '方案' + (i + 1));
+            const trendTraces = [];
+            metricKeys.forEach((mk, mi) => {
+                trendTraces.push({
+                    x: trendX,
+                    y: experiments.map(e => e[mk]),
+                    mode: 'lines+markers',
+                    name: metricLabels[mk],
+                    line: { color: colors[mi % colors.length], width: 2 },
+                    marker: { size: 8 }
+                });
+            });
+            const trendLayout = {
+                title: '多方案指标趋势对比',
+                xaxis: { title: '方案' },
+                yaxis: { title: '指标值' },
+                paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+                legend: { orientation: 'h', y: -0.15 }
+            };
+            setTimeout(() => {
+                Plotly.newPlot('comparisonTrendChart', trendTraces, trendLayout, {responsive: true});
+            }, 300);
+        }
+    }
+    
+    if (results.improvement_suggestions && results.improvement_suggestions.length > 0) {
+        html += '<h3>💡 改进建议</h3>';
+        html += '<div style="background:#e8f5e9;border-radius:6px;padding:12px">';
+        results.improvement_suggestions.forEach(s => {
+            html += '<p style="margin:4px 0">• ' + s + '</p>';
+        });
+        html += '</div>';
+        container.innerHTML += html;
+    }
+}
+
+function closeModal(modalId) {
+    document.getElementById(modalId).classList.remove('show');
+}
+
+const hash = window.location.hash.substring(1);
+if (hash && hash.startsWith('comparison-')) {
+    const id = hash.replace('comparison-', '');
+    setTimeout(() => showComparisonResults(parseInt(id)), 100);
+}
+</script>
+{% endblock %}
