@@ -18,7 +18,7 @@
             <p style="color: var(--muted);">记录分水调整历史，研究传统灌溉管理行为与规则演变</p>
         </div>
         <div class="action-bar">
-            <a href="/weirs/{{ weir.id }}" class="btn btn-sm btn-outline">返回堰坝详情</a>
+            <a href="/weirs" class="btn btn-sm btn-outline">返回堰坝列表</a>
             <a href="/weirs/{{ weir.id }}/schedule-logs/new" class="btn btn-sm btn-primary">记录新调度</a>
         </div>
     </div>
@@ -287,7 +287,7 @@ function loadTimeline() {
     if (operator) params.append('operator', operator);
     if (params.toString()) url += '?' + params.toString();
 
-    fetch(url)
+    return fetch(url)
         .then(r => r.json())
         .then(data => {
             timelineEvents = data.events;
@@ -709,10 +709,29 @@ function loadPlaybackData() {
 }
 
 function initPlayback() {
-    if (timelineEvents.length === 0) return;
+    if (timelineEvents.length === 0) {
+        showPlaybackEmpty();
+        return;
+    }
     currentPlaybackIndex = 0;
     updatePlaybackDisplay();
     updatePlaybackControls();
+}
+
+function showPlaybackEmpty() {
+    document.getElementById('playbackProgress').textContent = '0 / 0';
+    document.getElementById('playbackProgressBar').style.width = '0%';
+    document.getElementById('playbackContent').innerHTML = `
+        <div class="empty-state">
+            <div class="icon">▶️</div>
+            <p>暂无调度记录，无法回放</p>
+            <a href="/weirs/{{ weir.id }}/schedule-logs/new" class="btn btn-primary">记录第一条调度</a>
+        </div>
+    `;
+    ['btnFirst', 'btnPrev', 'btnPlay', 'btnNext', 'btnLast'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) btn.disabled = true;
+    });
 }
 
 function updatePlaybackDisplay() {
@@ -810,10 +829,17 @@ function updatePlaybackDisplay() {
 
 function updatePlaybackControls() {
     const total = timelineEvents.length;
-    document.getElementById('btnFirst').disabled = currentPlaybackIndex <= 0;
-    document.getElementById('btnPrev').disabled = currentPlaybackIndex <= 0;
-    document.getElementById('btnNext').disabled = currentPlaybackIndex >= total - 1;
-    document.getElementById('btnLast').disabled = currentPlaybackIndex >= total - 1;
+    const hasData = total > 0;
+    const btnFirst = document.getElementById('btnFirst');
+    const btnPrev = document.getElementById('btnPrev');
+    const btnPlay = document.getElementById('btnPlay');
+    const btnNext = document.getElementById('btnNext');
+    const btnLast = document.getElementById('btnLast');
+    if (btnFirst) btnFirst.disabled = !hasData || currentPlaybackIndex <= 0;
+    if (btnPrev) btnPrev.disabled = !hasData || currentPlaybackIndex <= 0;
+    if (btnPlay) btnPlay.disabled = !hasData;
+    if (btnNext) btnNext.disabled = !hasData || currentPlaybackIndex >= total - 1;
+    if (btnLast) btnLast.disabled = !hasData || currentPlaybackIndex >= total - 1;
 }
 
 function playbackFirst() {
@@ -862,7 +888,8 @@ function startPlayback() {
         currentPlaybackIndex = 0;
         updatePlaybackDisplay();
     }
-    document.getElementById('btnPlay').textContent = '⏸ 暂停';
+    const btnPlay = document.getElementById('btnPlay');
+    if (btnPlay) btnPlay.textContent = '⏸ 暂停';
     playbackInterval = setInterval(playbackNext, playbackSpeed);
 }
 
@@ -871,7 +898,8 @@ function stopPlayback() {
         clearInterval(playbackInterval);
         playbackInterval = null;
     }
-    document.getElementById('btnPlay').textContent = '▶ 自动播放';
+    const btnPlay = document.getElementById('btnPlay');
+    if (btnPlay) btnPlay.textContent = '▶ 自动播放';
 }
 
 function updatePlaybackSpeed() {

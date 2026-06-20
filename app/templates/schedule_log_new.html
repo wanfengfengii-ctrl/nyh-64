@@ -169,6 +169,7 @@
 const mainCanals = {{ main_canals | tojson }};
 const branchCanalsMap = {{ branch_canals_map | tojson }};
 const ruleLabels = {{ rule_labels | tojson }};
+const farmTypeLabels = {{ farm_type_labels | tojson }};
 
 let currentMainCanalId = null;
 let currentWaterLevel = 0;
@@ -233,7 +234,7 @@ function renderGatesContainer() {
                     <h3 style="margin-top: 0; margin-bottom: 12px;">
                         ${bc.name}
                         <span style="font-weight: normal; font-size: 0.85em; color: var(--muted); margin-left: 8px;">
-                            面积: ${bc.acreage}亩 · 类型: {{ farm_type_labels.get('${bc.farm_type}', '${bc.farm_type}') }}
+                            面积: ${bc.acreage}亩 · 类型: ${farmTypeLabels[bc.farm_type] || bc.farm_type}
                         </span>
                     </h3>
                     <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px;">
@@ -517,7 +518,7 @@ function validateForm() {
     }
 
     const waterLevel = parseFloat(document.getElementById('waterLevel').value);
-    if (isNaN(waterLevel) || waterLevel <= 0) {
+    if (isNaN(waterLevel) || waterLevel < 0) {
         alert('请选择有效的水位日期');
         return false;
     }
