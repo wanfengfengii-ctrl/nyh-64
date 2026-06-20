@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}编辑堰坝 - {{ weir.name }}{% endblock %}
+{% block nav_weirs %}class="active"{% endblock %}
+{% block content %}
+<h1>编辑堰坝：{{ weir.name }}</h1>
+<div class="card">
+    <form method="post" action="/weirs/{{ weir.id }}/edit">
+        <div class="form-row">
+            <div class="form-group"><label>名称</label><input type="text" name="name" value="{{ weir.name }}" required></div>
+            <div class="form-group"><label>位置</label><input type="text" name="location" value="{{ weir.location }}"></div>
+            <div class="form-group"><label>说明</label><input type="text" name="description" value="{{ weir.description }}"></div>
+        </div>
+        <div class="action-bar">
+            <button type="submit" class="btn btn-primary">保存</button>
+            <a href="/weirs" class="btn btn-outline">取消</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

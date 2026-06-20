@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}堰坝管理{% endblock %}
+{% block nav_weirs %}class="active"{% endblock %}
+{% block content %}
+<h1>堰坝管理</h1>
+
+<div class="card">
+    <h2>堰坝列表</h2>
+    {% if weirs %}
+    <table>
+        <thead><tr><th>名称</th><th>位置</th><th>说明</th><th>操作</th></tr></thead>
+        <tbody>
+            {% for w in weirs %}
+            <tr>
+                <td>{{ w.name }}</td>
+                <td>{{ w.location or '-' }}</td>
+                <td>{{ w.description or '-' }}</td>
+                <td>
+                    <a href="/weirs/{{ w.id }}/canals" class="btn btn-sm btn-info">渠闸参数</a>
+                    <a href="/weirs/{{ w.id }}/waterlevels" class="btn btn-sm btn-primary">水位录入</a>
+                    <a href="/weirs/{{ w.id }}/schemes" class="btn btn-sm btn-success">分水分析</a>
+                    <a href="/weirs/{{ w.id }}/edit" class="btn btn-sm btn-outline">编辑</a>
+                    <form method="post" action="/weirs/{{ w.id }}/delete" style="display:inline" onsubmit="return confirm('确定删除？')">
+                        <button type="submit" class="btn btn-sm btn-danger">删除</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state"><p>暂无堰坝</p></div>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>新增堰坝</h2>
+    <form method="post" action="/weirs">
+        <div class="form-row">
+            <div class="form-group"><label>名称</label><input type="text" name="name" required></div>
+            <div class="form-group"><label>位置</label><input type="text" name="location"></div>
+            <div class="form-group"><label>说明</label><input type="text" name="description"></div>
+        </div>
+        <button type="submit" class="btn btn-primary" style="margin-top:12px">添加堰坝</button>
+    </form>
+</div>
+{% endblock %}

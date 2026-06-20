@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}传统堰坝分水研究{% endblock %}</title>
+    <script src="https://cdn.plot.ly/plotly-2.35.0.min.js"></script>
+    <style>
+        :root {
+            --bg: #f5f0e8;
+            --fg: #2c2416;
+            --muted: #8a7e6b;
+            --accent: #b8860b;
+            --accent-light: #daa520;
+            --card: #fffdf5;
+            --border: #d4c9b0;
+            --danger: #c0392b;
+            --success: #27ae60;
+            --info: #2980b9;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: "Noto Serif SC", "Songti SC", Georgia, serif;
+            background: var(--bg);
+            color: var(--fg);
+            line-height: 1.7;
+        }
+        nav {
+            background: linear-gradient(135deg, #3e2c1a 0%, #5c3d2e 100%);
+            color: #f5f0e8;
+            padding: 0;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+        }
+        nav .nav-inner {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            padding: 0 24px;
+        }
+        nav .brand {
+            font-size: 1.3em;
+            font-weight: 700;
+            padding: 16px 0;
+            letter-spacing: 2px;
+            text-decoration: none;
+            color: #daa520;
+        }
+        nav .nav-links {
+            display: flex;
+            gap: 4px;
+            margin-left: 32px;
+            list-style: none;
+        }
+        nav .nav-links a {
+            color: #d4c9b0;
+            text-decoration: none;
+            padding: 16px 14px;
+            display: block;
+            font-size: 0.95em;
+            transition: color 0.2s, border-bottom-color 0.2s;
+            border-bottom: 3px solid transparent;
+        }
+        nav .nav-links a:hover, nav .nav-links a.active {
+            color: #daa520;
+            border-bottom-color: #daa520;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 24px;
+        }
+        h1 { font-size: 1.8em; margin-bottom: 16px; color: var(--fg); }
+        h2 { font-size: 1.4em; margin: 24px 0 12px; color: var(--fg); }
+        h3 { font-size: 1.15em; margin: 16px 0 8px; color: var(--fg); }
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 12px 0;
+        }
+        th, td {
+            padding: 10px 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.93em;
+        }
+        th {
+            background: #f0ead8;
+            font-weight: 600;
+            color: var(--fg);
+        }
+        tr:hover { background: #faf6ee; }
+        .btn {
+            display: inline-block;
+            padding: 8px 18px;
+            border: none;
+            border-radius: 5px;
+            font-size: 0.9em;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.2s;
+            font-family: inherit;
+        }
+        .btn-primary { background: var(--accent); color: #fff; }
+        .btn-primary:hover { background: var(--accent-light); }
+        .btn-danger { background: var(--danger); color: #fff; }
+        .btn-danger:hover { background: #e74c3c; }
+        .btn-success { background: var(--success); color: #fff; }
+        .btn-success:hover { background: #2ecc71; }
+        .btn-info { background: var(--info); color: #fff; }
+        .btn-info:hover { background: #3498db; }
+        .btn-sm { padding: 4px 10px; font-size: 0.82em; }
+        .btn-outline {
+            background: transparent;
+            border: 1px solid var(--accent);
+            color: var(--accent);
+        }
+        .btn-outline:hover { background: var(--accent); color: #fff; }
+        form { display: inline; }
+        .form-group {
+            margin-bottom: 12px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 4px;
+            font-weight: 600;
+            font-size: 0.9em;
+            color: var(--fg);
+        }
+        .form-group input, .form-group select, .form-group textarea {
+            width: 100%;
+            max-width: 400px;
+            padding: 8px 12px;
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            font-size: 0.93em;
+            font-family: inherit;
+            background: #fff;
+        }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 2px rgba(184,134,11,0.15);
+        }
+        .form-row {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .form-row .form-group { flex: 1; min-width: 180px; }
+        .badge {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 0.78em;
+            font-weight: 600;
+        }
+        .badge-draft { background: #fef3cd; color: #856404; }
+        .badge-published { background: #d4edda; color: #155724; }
+        .alert {
+            padding: 12px 18px;
+            border-radius: 6px;
+            margin-bottom: 16px;
+            font-size: 0.93em;
+        }
+        .alert-error { background: #fde8e8; color: var(--danger); border: 1px solid #f5c6cb; }
+        .alert-success { background: #e8f5e9; color: var(--success); border: 1px solid #c3e6cb; }
+        .chart-container {
+            width: 100%;
+            min-height: 400px;
+            margin: 16px 0;
+        }
+        .tabs {
+            display: flex;
+            gap: 0;
+            margin-bottom: 20px;
+            border-bottom: 2px solid var(--border);
+        }
+        .tab-btn {
+            padding: 10px 20px;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            font-size: 0.95em;
+            font-family: inherit;
+            color: var(--muted);
+            border-bottom: 3px solid transparent;
+            margin-bottom: -2px;
+            transition: all 0.2s;
+        }
+        .tab-btn.active, .tab-btn:hover {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+        }
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: var(--muted);
+        }
+        .empty-state .icon { font-size: 3em; margin-bottom: 12px; }
+        .inline-form { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; }
+        .inline-form .form-group { margin-bottom: 0; }
+        .action-bar {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin: 12px 0;
+        }
+        .sub-section {
+            margin-left: 24px;
+            padding-left: 16px;
+            border-left: 3px solid var(--border);
+        }
+        .stat-row {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            margin-bottom: 16px;
+        }
+        .stat-card {
+            flex: 1;
+            min-width: 140px;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px;
+            text-align: center;
+        }
+        .stat-card .stat-value { font-size: 1.6em; font-weight: 700; color: var(--accent); }
+        .stat-card .stat-label { font-size: 0.82em; color: var(--muted); }
+        .flash-messages { margin-bottom: 16px; }
+    </style>
+</head>
+<body>
+    <nav>
+        <div class="nav-inner">
+            <a href="/" class="brand">堰坝分水研究</a>
+            <ul class="nav-links">
+                <li><a href="/weirs" {% block nav_weirs %}{% endblock %}>堰坝管理</a></li>
+            </ul>
+        </div>
+    </nav>
+    <div class="container">
+        {% block content %}{% endblock %}
+    </div>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

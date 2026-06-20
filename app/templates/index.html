@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}传统堰坝分水研究系统{% endblock %}
+{% block nav_weirs %}class="active"{% endblock %}
+{% block content %}
+<h1>传统堰坝分水研究系统</h1>
+<p style="color: var(--muted); margin-bottom: 24px;">研究传统堰坝在不同水位、闸口开度和灌渠宽度下的分水比例，辅助复原历史灌溉规则。</p>
+
+<div class="stat-row">
+    <div class="stat-card">
+        <div class="stat-value">{{ weirs|length }}</div>
+        <div class="stat-label">堰坝总数</div>
+    </div>
+</div>
+
+<div class="card">
+    <h2>堰坝列表</h2>
+    {% if weirs %}
+    <table>
+        <thead>
+            <tr><th>名称</th><th>位置</th><th>说明</th><th>操作</th></tr>
+        </thead>
+        <tbody>
+            {% for w in weirs %}
+            <tr>
+                <td>{{ w.name }}</td>
+                <td>{{ w.location or '-' }}</td>
+                <td>{{ w.description or '-' }}</td>
+                <td>
+                    <a href="/weirs/{{ w.id }}/canals" class="btn btn-sm btn-info">渠闸参数</a>
+                    <a href="/weirs/{{ w.id }}/waterlevels" class="btn btn-sm btn-primary">水位录入</a>
+                    <a href="/weirs/{{ w.id }}/schemes" class="btn btn-sm btn-success">分水分析</a>
+                    <a href="/weirs/{{ w.id }}/edit" class="btn btn-sm btn-outline">编辑</a>
+                    <form method="post" action="/weirs/{{ w.id }}/delete" style="display:inline" onsubmit="return confirm('确定删除该堰坝？所有关联数据将一并删除。')">
+                        <button type="submit" class="btn btn-sm btn-danger">删除</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">
+        <div class="icon">🏜️</div>
+        <p>尚未创建堰坝，请先添加一座堰坝</p>
+    </div>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>新增堰坝</h2>
+    <form method="post" action="/weirs">
+        <div class="form-row">
+            <div class="form-group">
+                <label>名称</label>
+                <input type="text" name="name" required placeholder="如：都江堰">
+            </div>
+            <div class="form-group">
+                <label>位置</label>
+                <input type="text" name="location" placeholder="如：四川灌县">
+            </div>
+            <div class="form-group">
+                <label>说明</label>
+                <input type="text" name="description" placeholder="历史背景或备注">
+            </div>
+        </div>
+        <div style="margin-top:12px">
+            <button type="submit" class="btn btn-primary">添加堰坝</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

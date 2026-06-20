@@ -1,0 +1,318 @@
+{% extends "base.html" %}
+{% block title %}分水分析 - {{ weir.name }}{% endblock %}
+{% block nav_weirs %}class="active"{% endblock %}
+{% block content %}
+<h1>分水分析 — {{ weir.name }}</h1>
+<p style="margin-bottom:16px">
+    <a href="/weirs/{{ weir.id }}/canals" class="btn btn-sm btn-info">渠闸参数</a>
+    <a href="/weirs/{{ weir.id }}/waterlevels" class="btn btn-sm btn-primary">水位录入</a>
+    <a href="/weirs" class="btn btn-sm btn-outline">返回堰坝列表</a>
+</p>
+
+{% if not main_canals %}
+<div class="card">
+    <div class="empty-state">
+        <div class="icon">🏗️</div>
+        <p>请先在「渠闸参数」中添加主渠和支渠</p>
+    </div>
+</div>
+{% elif not water_levels %}
+<div class="card">
+    <div class="empty-state">
+        <div class="icon">💧</div>
+        <p>请先在「水位录入」中添加水位数据</p>
+    </div>
+</div>
+{% else %}
+
+<div class="card">
+    <h2>创建分水方案</h2>
+    <form method="post" action="/weirs/{{ weir.id }}/schemes">
+        <div class="form-row">
+            <div class="form-group">
+                <label>方案名称</label>
+                <input type="text" name="name" required placeholder="如：枯水期方案">
+            </div>
+            <div class="form-group">
+                <label>分水规则</label>
+                <select name="rule">
+                    <option value="equal">均分</option>
+                    <option value="downstream_first">优先下游</option>
+                    <option value="acreage_ratio">按田亩比例</option>
+                </select>
+            </div>
+        </div>
+        <button type="submit" class="btn btn-primary" style="margin-top:12px">创建方案</button>
+    </form>
+</div>
+
+<div class="card">
+    <h2>方案列表</h2>
+    {% if schemes %}
+    <table>
+        <thead><tr><th>名称</th><th>规则</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
+        <tbody>
+            {% for s in schemes %}
+            <tr>
+                <td>{{ s.name }}</td>
+                <td>
+                    <form method="post" action="/schemes/{{ s.id }}/update-rule" style="display:inline-flex;gap:4px;align-items:center">
+                        <select name="rule" onchange="this.form.submit()" style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:0.85em">
+                            <option value="equal" {% if s.rule == 'equal' %}selected{% endif %}>均分</option>
+                            <option value="downstream_first" {% if s.rule == 'downstream_first' %}selected{% endif %}>优先下游</option>
+                            <option value="acreage_ratio" {% if s.rule == 'acreage_ratio' %}selected{% endif %}>按田亩比例</option>
+                        </select>
+                    </form>
+                </td>
+                <td>
+                    {% if s.status == 'draft' %}
+                    <span class="badge badge-draft">草稿</span>
+                    {% else %}
+                    <span class="badge badge-published">已发布</span>
+                    {% endif %}
+                </td>
+                <td>{{ s.created_at }}</td>
+                <td>
+                    {% if main_canals %}
+                    <form method="post" action="/schemes/{{ s.id }}/compute" style="display:inline">
+                        <input type="hidden" name="main_canal_id" value="{{ main_canals[0].id }}">
+                        <button type="submit" class="btn btn-sm btn-info" onclick="return confirm('计算将覆盖已有结果，确认？')">计算</button>
+                    </form>
+                    {% endif %}
+                    {% if s.status == 'draft' %}
+                    <form method="post" action="/schemes/{{ s.id }}/publish" style="display:inline" onsubmit="return confirm('确认发布此方案？')">
+                        <button type="submit" class="btn btn-sm btn-success">发布</button>
+                    </form>
+                    {% endif %}
+                    <form method="post" action="/schemes/{{ s.id }}/delete" style="display:inline" onsubmit="return confirm('确认删除此方案？')">
+                        <button type="submit" class="btn btn-sm btn-danger">删除</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state"><p>暂无分水方案，请先创建</p></div>
+    {% endif %}
+</div>
+
+{% for s in schemes %}
+<div class="card" id="scheme-card-{{ s.id }}">
+    <h2>方案「{{ s.name }}」— {{ rule_labels.get(s.rule, s.rule) }}
+        {% if s.status == 'draft' %}
+        <span class="badge badge-draft">草稿</span>
+        {% else %}
+        <span class="badge badge-published">已发布</span>
+        {% endif %}
+    </h2>
+    <div id="scheme-chart-{{ s.id }}" class="chart-container"></div>
+    <div id="scheme-table-{{ s.id }}"></div>
+</div>
+{% endfor %}
+
+<div class="card">
+    <h2>三种规则对比</h2>
+    <p style="color:var(--muted);font-size:0.88em;margin-bottom:12px">
+        对比均分、优先下游、按田亩比例三种分水规则下各支渠的水量分配
+    </p>
+    <div class="form-group" style="max-width:400px;margin-bottom:16px">
+        <label>选择主渠</label>
+        <select id="compareMainCanal" onchange="loadCompareChart()">
+            {% for mc in main_canals %}
+            <option value="{{ mc.id }}">{{ mc.name }}（宽{{ mc.width }}m）</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div id="compareChart" class="chart-container" style="min-height:500px"></div>
+    <div id="compareSummary"></div>
+</div>
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if main_canals and water_levels %}
+<script>
+const RULE_COLORS = {
+    equal: '#2980b9',
+    downstream_first: '#e67e22',
+    acreage_ratio: '#27ae60'
+};
+const RULE_LABELS = {
+    equal: '均分',
+    downstream_first: '优先下游',
+    acreage_ratio: '按田亩比例'
+};
+const BRANCH_COLORS = [
+    '#2980b9', '#e67e22', '#27ae60', '#8e44ad',
+    '#c0392b', '#16a085', '#d35400', '#2c3e50'
+];
+
+{% for s in schemes %}
+(function(){
+    var schemeId = {{ s.id }};
+    fetch('/schemes/' + schemeId + '/chart-data')
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+            if (!data.dates || data.dates.length === 0) {
+                document.getElementById('scheme-chart-' + schemeId).innerHTML =
+                    '<div class="empty-state"><p>尚未计算，请点击「计算」按钮</p></div>';
+                return;
+            }
+            var traces = [];
+            data.branches.forEach(function(br, idx){
+                traces.push({
+                    x: data.dates,
+                    y: data.flows[br.id],
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    name: br.name,
+                    line: { color: BRANCH_COLORS[idx % BRANCH_COLORS.length], width: 2 },
+                    marker: { size: 5 }
+                });
+            });
+            var layout = {
+                title: '分水量时间序列',
+                xaxis: { title: '日期' },
+                yaxis: { title: '分水量(m³/s)', rangemode: 'tozero' },
+                margin: { t: 40, b: 60, l: 70, r: 20 },
+                paper_bgcolor: 'rgba(0,0,0,0)',
+                plot_bgcolor: 'rgba(0,0,0,0)',
+                legend: { orientation: 'h', y: -0.15 }
+            };
+            Plotly.newPlot('scheme-chart-' + schemeId, traces, layout, {responsive: true});
+
+            var html = '<table><thead><tr><th>日期</th>';
+            data.branches.forEach(function(br){ html += '<th>' + br.name + '</th>'; });
+            html += '<th>合计</th></tr></thead><tbody>';
+            data.dates.forEach(function(d, di){
+                html += '<tr><td>' + d + '</td>';
+                var total = 0;
+                data.branches.forEach(function(br){
+                    var v = data.flows[br.id][di];
+                    total += v;
+                    html += '<td>' + v.toFixed(4) + '</td>';
+                });
+                html += '<td><strong>' + total.toFixed(4) + '</strong></td></tr>';
+            });
+            html += '</tbody></table>';
+            document.getElementById('scheme-table-' + schemeId).innerHTML = html;
+        });
+})();
+{% endfor %}
+
+function loadCompareChart(){
+    var mcSelect = document.getElementById('compareMainCanal');
+    var mainCanalId = mcSelect.value;
+    if (!mainCanalId) return;
+    var weirId = {{ weir.id }};
+    fetch('/weirs/' + weirId + '/compare-chart-data?main_canal_id=' + mainCanalId)
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+            if (!data.rules || data.rules.length === 0) {
+                document.getElementById('compareChart').innerHTML =
+                    '<div class="empty-state"><p>暂无数据，请确保已添加支渠和水位</p></div>';
+                document.getElementById('compareSummary').innerHTML = '';
+                return;
+            }
+            var traces = [];
+            data.rules.forEach(function(ruleData, ri){
+                ruleData.dates.forEach(function(date, di){
+                    var branchIds = Object.keys(ruleData.branches);
+                    branchIds.forEach(function(bid, bi){
+                        traces.push({
+                            x: [date],
+                            y: [ruleData.branches[bid].flows[di]],
+                            type: 'bar',
+                            name: RULE_LABELS[ruleData.rule] + ' - ' + ruleData.branches[bid].name,
+                            marker: {
+                                color: RULE_COLORS[ruleData.rule],
+                                opacity: 0.5 + bi * 0.15
+                            },
+                            legendgroup: RULE_LABELS[ruleData.rule],
+                            showlegend: di === 0
+                        });
+                    });
+                });
+            });
+            if (traces.length === 0) {
+                document.getElementById('compareChart').innerHTML =
+                    '<div class="empty-state"><p>无计算结果</p></div>';
+                return;
+            }
+            var allDates = [];
+            var allBranches = data.branch_canals || [];
+            data.rules.forEach(function(rd){
+                rd.dates.forEach(function(d){
+                    if (allDates.indexOf(d) === -1) allDates.push(d);
+                });
+            });
+            allDates.sort();
+
+            var barTraces = [];
+            var ruleKeys = ['equal', 'downstream_first', 'acreage_ratio'];
+            ruleKeys.forEach(function(rk){
+                var rd = data.rules.find(function(r){ return r.rule === rk; });
+                if (!rd) return;
+                Object.keys(rd.branches).forEach(function(bid, bi){
+                    var xArr = [];
+                    var yArr = [];
+                    allDates.forEach(function(d){
+                        var di = rd.dates.indexOf(d);
+                        xArr.push(d);
+                        yArr.push(di >= 0 ? rd.branches[bid].flows[di] : 0);
+                    });
+                    barTraces.push({
+                        x: xArr,
+                        y: yArr,
+                        type: 'scatter',
+                        mode: 'lines+markers',
+                        name: RULE_LABELS[rk] + ' - ' + rd.branches[bid].name,
+                        line: { color: BRANCH_COLORS[bi % BRANCH_COLORS.length], width: 2, dash: rk === 'equal' ? 'solid' : (rk === 'downstream_first' ? 'dash' : 'dot') },
+                        marker: { size: 5 },
+                        legendgroup: bid
+                    });
+                });
+            });
+
+            var layout = {
+                title: '三种规则分水对比',
+                xaxis: { title: '日期' },
+                yaxis: { title: '分水量(m³/s)', rangemode: 'tozero' },
+                margin: { t: 50, b: 80, l: 70, r: 20 },
+                paper_bgcolor: 'rgba(0,0,0,0)',
+                plot_bgcolor: 'rgba(0,0,0,0)',
+                legend: { orientation: 'h', y: -0.25 },
+                barmode: 'group'
+            };
+            Plotly.newPlot('compareChart', barTraces, layout, {responsive: true});
+
+            var sumHtml = '<h3 style="margin-top:16px">各规则平均分配水量</h3>';
+            sumHtml += '<table><thead><tr><th>支渠</th>';
+            ruleKeys.forEach(function(rk){
+                sumHtml += '<th>' + RULE_LABELS[rk] + '</th>';
+            });
+            sumHtml += '</tr></thead><tbody>';
+            (data.branch_canals || []).forEach(function(bc){
+                sumHtml += '<tr><td>' + bc.name + '</td>';
+                ruleKeys.forEach(function(rk){
+                    var rd = data.rules.find(function(r){ return r.rule === rk; });
+                    if (rd && rd.branches[bc.id]) {
+                        var flows = rd.branches[bc.id].flows;
+                        var avg = flows.reduce(function(a,b){ return a+b; }, 0) / flows.length;
+                        sumHtml += '<td>' + avg.toFixed(4) + '</td>';
+                    } else {
+                        sumHtml += '<td>-</td>';
+                    }
+                });
+                sumHtml += '</tr>';
+            });
+            sumHtml += '</tbody></table>';
+            document.getElementById('compareSummary').innerHTML = sumHtml;
+        });
+}
+loadCompareChart();
+</script>
+{% endif %}
+{% endblock %}

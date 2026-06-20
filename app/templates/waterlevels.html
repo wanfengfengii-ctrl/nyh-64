@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}水位录入 - {{ weir.name }}{% endblock %}
+{% block nav_weirs %}class="active"{% endblock %}
+{% block content %}
+<h1>水位录入 — {{ weir.name }}</h1>
+<p style="margin-bottom:16px">
+    <a href="/weirs/{{ weir.id }}/canals" class="btn btn-sm btn-info">渠闸参数</a>
+    <a href="/weirs/{{ weir.id }}/schemes" class="btn btn-sm btn-success">分水分析</a>
+    <a href="/weirs" class="btn btn-sm btn-outline">返回堰坝列表</a>
+</p>
+
+<div class="card">
+    <h2>水位记录</h2>
+    {% if levels %}
+    <table>
+        <thead><tr><th>日期</th><th>水位(m)</th><th>类型</th><th>操作</th></tr></thead>
+        <tbody>
+            {% for l in levels %}
+            <tr>
+                <td>{{ l.date }}</td>
+                <td>{{ l.level }}</td>
+                <td>{% if l.is_simulated %}<span class="badge badge-draft">模拟</span>{% else %}<span class="badge badge-published">历史</span>{% endif %}</td>
+                <td>
+                    <form method="post" action="/waterlevels/{{ l.id }}/delete" style="display:inline" onsubmit="return confirm('确认删除？')">
+                        <button type="submit" class="btn btn-sm btn-danger">删除</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state"><p>暂无水位记录</p></div>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>单条录入</h2>
+    <form method="post" action="/weirs/{{ weir.id }}/waterlevels">
+        <div class="form-row">
+            <div class="form-group"><label>日期</label><input type="date" name="date" required></div>
+            <div class="form-group"><label>水位(m)</label><input type="number" name="level" step="0.01" min="0" required></div>
+            <div class="form-group"><label>类型</label><select name="is_simulated"><option value="off">历史水位</option><option value="on">模拟水位</option></select></div>
+        </div>
+        <button type="submit" class="btn btn-primary" style="margin-top:12px">录入</button>
+    </form>
+</div>
+
+<div class="card">
+    <h2>批量录入</h2>
+    <p style="color:var(--muted);font-size:0.88em;margin-bottom:12px">每行一条，日期与水位一一对应，行数须相同</p>
+    <form method="post" action="/weirs/{{ weir.id }}/waterlevels/batch">
+        <div class="form-row">
+            <div class="form-group" style="max-width:300px">
+                <label>日期（每行一个）</label>
+                <textarea name="dates" rows="6" placeholder="2024-01-01&#10;2024-01-02&#10;2024-01-03" required></textarea>
+            </div>
+            <div class="form-group" style="max-width:300px">
+                <label>水位(m)（每行一个）</label>
+                <textarea name="levels" rows="6" placeholder="1.20&#10;1.35&#10;1.10" required></textarea>
+            </div>
+            <div class="form-group">
+                <label>类型</label><select name="is_simulated"><option value="off">历史水位</option><option value="on">模拟水位</option></select>
+            </div>
+        </div>
+        <button type="submit" class="btn btn-primary" style="margin-top:12px">批量录入</button>
+    </form>
+</div>
+
+{% if levels %}
+<div class="card">
+    <h2>水位序列图</h2>
+    <div id="waterLevelChart" class="chart-container"></div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if levels %}
+<script>
+(function(){
+    const dates = [{% for l in levels %}'{{ l.date }}'{% if not loop.last %},{% endif %}{% endfor %}];
+    const levels = [{% for l in levels %}{{ l.level }}{% if not loop.last %},{% endif %}{% endfor %}];
+    const colors = [{% for l in levels %}{% if l.is_simulated %}'rgba(184,134,11,0.7)'{% else %}'rgba(39,174,96,0.7)'{% endif %}{% if not loop.last %},{% endif %}{% endfor %}];
+    const trace = {
+        x: dates,
+        y: levels,
+        type: 'scatter',
+        mode: 'lines+markers',
+        name: '水位',
+        line: { color: '#2980b9', width: 2 },
+        marker: { size: 6, color: colors }
+    };
+    const layout = {
+        title: '水位序列',
+        xaxis: { title: '日期' },
+        yaxis: { title: '水位(m)', rangemode: 'tozero' },
+        margin: { t: 40, b: 60, l: 60, r: 20 },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)',
+    };
+    Plotly.newPlot('waterLevelChart', [trace], layout, {responsive: true});
+})();
+</script>
+{% endif %}
+{% endblock %}

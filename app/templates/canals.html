@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{% block title %}渠闸参数 - {{ weir.name }}{% endblock %}
+{% block nav_weirs %}class="active"{% endblock %}
+{% block content %}
+<h1>渠闸参数管理 — {{ weir.name }}</h1>
+<p style="margin-bottom:16px">
+    <a href="/weirs" class="btn btn-sm btn-outline">返回堰坝列表</a>
+    <a href="/weirs/{{ weir.id }}/waterlevels" class="btn btn-sm btn-primary">水位录入</a>
+    <a href="/weirs/{{ weir.id }}/schemes" class="btn btn-sm btn-success">分水分析</a>
+</p>
+
+<div class="card">
+    <h2>主渠列表</h2>
+    {% if main_canals %}
+    <table>
+        <thead><tr><th>名称</th><th>宽度(m)</th><th>说明</th><th>操作</th></tr></thead>
+        <tbody>
+            {% for mc in main_canals %}
+            <tr>
+                <td>{{ mc.name }}</td>
+                <td>{{ mc.width }}</td>
+                <td>{{ mc.description or '-' }}</td>
+                <td>
+                    <button type="button" class="btn btn-sm btn-outline" onclick="toggleEditMainCanal({{ mc.id }}, '{{ mc.name }}', {{ mc.width }}, '{{ mc.description }}')">编辑</button>
+                    <form method="post" action="/main-canals/{{ mc.id }}/delete" style="display:inline" onsubmit="return confirm('删除主渠将同时删除所有支渠和闸口，确认？')">
+                        <button type="submit" class="btn btn-sm btn-danger">删除</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color:var(--muted)">暂无主渠，请先添加主渠</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>新增主渠</h2>
+    <form method="post" action="/weirs/{{ weir.id }}/main-canals">
+        <div class="form-row">
+            <div class="form-group"><label>名称</label><input type="text" name="name" required placeholder="如：内江总渠"></div>
+            <div class="form-group"><label>宽度(m)</label><input type="number" name="width" step="0.1" min="0" value="1.0" required></div>
+            <div class="form-group"><label>说明</label><input type="text" name="description"></div>
+        </div>
+        <button type="submit" class="btn btn-primary" style="margin-top:12px">添加主渠</button>
+    </form>
+</div>
+
+<div id="editMainCanalModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.4);z-index:999">
+    <div class="card" style="max-width:500px;margin:80px auto;padding:30px">
+        <h3>编辑主渠</h3>
+        <form method="post" id="editMainCanalForm" action="">
+            <div class="form-group"><label>名称</label><input type="text" name="name" id="emc_name" required></div>
+            <div class="form-group"><label>宽度(m)</label><input type="number" name="width" id="emc_width" step="0.1" min="0" required></div>
+            <div class="form-group"><label>说明</label><input type="text" name="description" id="emc_desc"></div>
+            <div class="action-bar">
+                <button type="submit" class="btn btn-primary">保存</button>
+                <button type="button" class="btn btn-outline" onclick="document.getElementById('editMainCanalModal').style.display='none'">取消</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% for mc in main_canals %}
+<div class="card">
+    <h2>主渠「{{ mc.name }}」— 支渠列表</h2>
+    {% if branch_canals.get(mc.id) %}
+    <table>
+        <thead><tr><th>名称</th><th>宽度(m)</th><th>田亩(亩)</th><th>位置序号</th><th>说明</th><th>操作</th></tr></thead>
+        <tbody>
+            {% for bc in branch_canals[mc.id] %}
+            <tr>
+                <td>{{ bc.name }}</td>
+                <td>{{ bc.width }}</td>
+                <td>{{ bc.acreage }}</td>
+                <td>{{ bc.position }}</td>
+                <td>{{ bc.description or '-' }}</td>
+                <td>
+                    <button type="button" class="btn btn-sm btn-outline" onclick="toggleEditBranchCanal({{ bc.id }}, '{{ bc.name }}', {{ bc.width }}, {{ bc.acreage }}, {{ bc.position }}, '{{ bc.description }}')">编辑</button>
+                    <form method="post" action="/branch-canals/{{ bc.id }}/delete" style="display:inline" onsubmit="return confirm('删除支渠将同时删除其闸口，确认？')">
+                        <button type="submit" class="btn btn-sm btn-danger">删除</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color:var(--muted)">暂无支渠</p>
+    {% endif %}
+
+    <h3>新增支渠</h3>
+    <form method="post" action="/main-canals/{{ mc.id }}/branch-canals">
+        <div class="form-row">
+            <div class="form-group"><label>名称</label><input type="text" name="name" required></div>
+            <div class="form-group"><label>宽度(m)</label><input type="number" name="width" step="0.1" min="0" value="0.5" required></div>
+            <div class="form-group"><label>田亩(亩)</label><input type="number" name="acreage" step="0.1" min="0" value="0" required></div>
+            <div class="form-group"><label>位置序号</label><input type="number" name="position" min="0" value="0" required></div>
+            <div class="form-group"><label>说明</label><input type="text" name="description"></div>
+        </div>
+        <button type="submit" class="btn btn-primary" style="margin-top:8px">添加支渠</button>
+    </form>
+
+    {% for bc in branch_canals.get(mc.id, []) %}
+    <div class="sub-section" style="margin-top:16px">
+        <h3>支渠「{{ bc.name }}」— 闸口列表</h3>
+        {% if gates.get(bc.id) %}
+        <table>
+            <thead><tr><th>名称</th><th>开度(%)</th><th>说明</th><th>操作</th></tr></thead>
+            <tbody>
+                {% for g in gates[bc.id] %}
+                <tr>
+                    <td>{{ g.name }}</td>
+                    <td>{{ g.opening }}</td>
+                    <td>{{ g.description or '-' }}</td>
+                    <td>
+                        <button type="button" class="btn btn-sm btn-outline" onclick="toggleEditGate({{ g.id }}, '{{ g.name }}', {{ g.opening }}, '{{ g.description }}')">编辑</button>
+                        <form method="post" action="/gates/{{ g.id }}/delete" style="display:inline" onsubmit="return confirm('确认删除闸口？')">
+                            <button type="submit" class="btn btn-sm btn-danger">删除</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p style="color:var(--muted)">暂无闸口</p>
+        {% endif %}
+
+        <form method="post" action="/branch-canals/{{ bc.id }}/gates" class="inline-form">
+            <div class="form-group"><label>闸口名称</label><input type="text" name="name" required placeholder="如：东闸"></div>
+            <div class="form-group"><label>开度(%)</label><input type="number" name="opening" min="0" max="100" value="100" required></div>
+            <div class="form-group"><label>说明</label><input type="text" name="description"></div>
+            <button type="submit" class="btn btn-sm btn-primary">添加闸口</button>
+        </form>
+    </div>
+    {% endfor %}
+</div>
+{% endfor %}
+
+<div id="editBranchCanalModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.4);z-index:999">
+    <div class="card" style="max-width:500px;margin:80px auto;padding:30px">
+        <h3>编辑支渠</h3>
+        <form method="post" id="editBranchCanalForm" action="">
+            <div class="form-group"><label>名称</label><input type="text" name="name" id="ebc_name" required></div>
+            <div class="form-group"><label>宽度(m)</label><input type="number" name="width" id="ebc_width" step="0.1" min="0" required></div>
+            <div class="form-group"><label>田亩(亩)</label><input type="number" name="acreage" id="ebc_acreage" step="0.1" min="0" required></div>
+            <div class="form-group"><label>位置序号</label><input type="number" name="position" id="ebc_position" min="0" required></div>
+            <div class="form-group"><label>说明</label><input type="text" name="description" id="ebc_desc"></div>
+            <div class="action-bar">
+                <button type="submit" class="btn btn-primary">保存</button>
+                <button type="button" class="btn btn-outline" onclick="document.getElementById('editBranchCanalModal').style.display='none'">取消</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="editGateModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.4);z-index:999">
+    <div class="card" style="max-width:500px;margin:80px auto;padding:30px">
+        <h3>编辑闸口</h3>
+        <form method="post" id="editGateForm" action="">
+            <div class="form-group"><label>名称</label><input type="text" name="name" id="eg_name" required></div>
+            <div class="form-group"><label>开度(%)</label><input type="number" name="opening" id="eg_opening" min="0" max="100" required></div>
+            <div class="form-group"><label>说明</label><input type="text" name="description" id="eg_desc"></div>
+            <div class="action-bar">
+                <button type="submit" class="btn btn-primary">保存</button>
+                <button type="button" class="btn btn-outline" onclick="document.getElementById('editGateModal').style.display='none'">取消</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleEditMainCanal(id, name, width, desc) {
+    document.getElementById('editMainCanalForm').action = '/main-canals/' + id + '/edit';
+    document.getElementById('emc_name').value = name;
+    document.getElementById('emc_width').value = width;
+    document.getElementById('emc_desc').value = desc;
+    document.getElementById('editMainCanalModal').style.display = 'block';
+}
+function toggleEditBranchCanal(id, name, width, acreage, position, desc) {
+    document.getElementById('editBranchCanalForm').action = '/branch-canals/' + id + '/edit';
+    document.getElementById('ebc_name').value = name;
+    document.getElementById('ebc_width').value = width;
+    document.getElementById('ebc_acreage').value = acreage;
+    document.getElementById('ebc_position').value = position;
+    document.getElementById('ebc_desc').value = desc;
+    document.getElementById('editBranchCanalModal').style.display = 'block';
+}
+function toggleEditGate(id, name, opening, desc) {
+    document.getElementById('editGateForm').action = '/gates/' + id + '/edit';
+    document.getElementById('eg_name').value = name;
+    document.getElementById('eg_opening').value = opening;
+    document.getElementById('eg_desc').value = desc;
+    document.getElementById('editGateModal').style.display = 'block';
+}
+</script>
+{% endblock %}
