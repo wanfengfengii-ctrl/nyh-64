@@ -74,8 +74,12 @@
                 <td>{{ s.created_at }}</td>
                 <td>
                     {% if main_canals %}
-                    <form method="post" action="/schemes/{{ s.id }}/compute" style="display:inline">
-                        <input type="hidden" name="main_canal_id" value="{{ main_canals[0].id }}">
+                    <form method="post" action="/schemes/{{ s.id }}/compute" style="display:inline-flex;gap:4px;align-items:center">
+                        <select name="main_canal_id" style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:0.82em">
+                            {% for mc in main_canals %}
+                            <option value="{{ mc.id }}" {% if s.main_canal_id == mc.id %}selected{% endif %}>{{ mc.name }}（宽{{ mc.width }}m）</option>
+                            {% endfor %}
+                        </select>
                         <button type="submit" class="btn btn-sm btn-info" onclick="return confirm('计算将覆盖已有结果，确认？')">计算</button>
                     </form>
                     {% endif %}

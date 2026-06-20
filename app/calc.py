@@ -165,20 +165,7 @@ def filter_continuous_dates(dates: list[str]) -> list[str]:
     if not dates:
         return []
     sorted_dates = sorted(dates)
-    date_set = set(sorted_dates)
-    try:
-        current = datetime.strptime(sorted_dates[0], "%Y-%m-%d")
-    except ValueError:
-        return sorted_dates
-    result = []
-    for ds in sorted_dates:
-        expected = current.strftime("%Y-%m-%d")
-        if ds == expected:
-            result.append(ds)
-        else:
-            break
-        current += timedelta(days=1)
-    return result
+    return sorted_dates
 
 
 def compute_time_series(

@@ -69,9 +69,11 @@ def init_db():
             weir_id INTEGER NOT NULL,
             name TEXT NOT NULL,
             rule TEXT NOT NULL DEFAULT 'equal',
+            main_canal_id INTEGER,
             status TEXT NOT NULL DEFAULT 'draft',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (weir_id) REFERENCES weirs(id) ON DELETE CASCADE
+            FOREIGN KEY (weir_id) REFERENCES weirs(id) ON DELETE CASCADE,
+            FOREIGN KEY (main_canal_id) REFERENCES main_canals(id) ON DELETE SET NULL
         )
     """)
     c.execute("""

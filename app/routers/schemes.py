@@ -22,15 +22,21 @@ def _build_branch_canals(db, main_canal_id):
     bcs = db.execute("SELECT * FROM branch_canals WHERE main_canal_id = ? ORDER BY position, id", (main_canal_id,)).fetchall()
     result = []
     for bc in bcs:
-        gate = db.execute("SELECT * FROM gates WHERE branch_canal_id = ? ORDER BY id LIMIT 1", (bc["id"],)).fetchone()
+        gates = db.execute("SELECT * FROM gates WHERE branch_canal_id = ? ORDER BY id", (bc["id"],)).fetchall()
+        if gates:
+            avg_opening = sum(g["opening"] for g in gates) / len(gates)
+            gate_names = "、".join(g["name"] for g in gates)
+        else:
+            avg_opening = 100
+            gate_names = ""
         result.append({
             "id": bc["id"],
             "name": bc["name"],
             "width": bc["width"],
             "acreage": bc["acreage"],
             "position": bc["position"],
-            "gate_opening": gate["opening"] if gate else 100,
-            "gate_name": gate["name"] if gate else "",
+            "gate_opening": avg_opening,
+            "gate_name": gate_names,
         })
     return result
 
@@ -80,8 +86,37 @@ def update_scheme_rule(scheme_id: int, rule: str = Form(...)):
         db.close()
         raise HTTPException(status_code=404, detail="方案不存在")
     weir_id = scheme["weir_id"]
+    main_canal_id = scheme["main_canal_id"]
     db.execute("DELETE FROM scheme_results WHERE scheme_id = ?", (scheme_id,))
-    db.execute("UPDATE schemes SET rule = ?, status = 'draft' WHERE id = ?", (rule, scheme_id))
+    db.execute("UPDATE schemes SET rule = ?, status = 'draft' WHERE id = ?", (rule, scheme_id,))
+    if main_canal_id:
+        mc = db.execute("SELECT * FROM main_canals WHERE id = ?", (main_canal_id,)).fetchone()
+        if mc:
+            branch_canals = _build_branch_canals(db, main_canal_id)
+            water_levels = db.execute("SELECT * FROM water_levels WHERE weir_id = ? ORDER BY date", (weir_id,)).fetchall()
+            if branch_canals and water_levels:
+                all_dates = [wl["date"] for wl in water_levels]
+                continuous_dates = filter_continuous_dates(all_dates)
+                filtered_levels = [wl for wl in water_levels if wl["date"] in continuous_dates]
+                if filtered_levels:
+                    ts = compute_time_series(
+                        [{"date": wl["date"], "level": wl["level"]} for wl in filtered_levels],
+                        mc["width"],
+                        branch_canals,
+                        rule,
+                    )
+                    over_alloc = False
+                    for record in ts:
+                        if record["over_allocated"]:
+                            over_alloc = True
+                            break
+                    if not over_alloc:
+                        for record in ts:
+                            for br in record["branches"]:
+                                db.execute(
+                                    "INSERT INTO scheme_results (scheme_id, date, branch_canal_id, flow) VALUES (?, ?, ?, ?)",
+                                    (scheme_id, record["date"], br["branch_canal_id"], br["flow"]),
+                                )
     db.commit()
     db.close()
     return RedirectResponse(url=f"/weirs/{weir_id}/schemes", status_code=303)
@@ -145,7 +180,7 @@ def compute_scheme(scheme_id: int, main_canal_id: int = Form(...)):
                 "INSERT INTO scheme_results (scheme_id, date, branch_canal_id, flow) VALUES (?, ?, ?, ?)",
                 (scheme_id, record["date"], br["branch_canal_id"], br["flow"]),
             )
-    db.execute("UPDATE schemes SET status = 'draft' WHERE id = ?", (scheme_id,))
+    db.execute("UPDATE schemes SET status = 'draft', main_canal_id = ? WHERE id = ?", (main_canal_id, scheme_id,))
     db.commit()
     db.close()
     return RedirectResponse(url=f"/weirs/{weir_id}/schemes", status_code=303)
@@ -158,16 +193,18 @@ def publish_scheme(scheme_id: int):
         db.close()
         raise HTTPException(status_code=404, detail="方案不存在")
     weir_id = scheme["weir_id"]
+    if not scheme["main_canal_id"]:
+        db.close()
+        raise HTTPException(status_code=400, detail="方案尚未计算，无法发布")
     results = db.execute("SELECT * FROM scheme_results WHERE scheme_id = ?", (scheme_id,)).fetchall()
     if not results:
         db.close()
         raise HTTPException(status_code=400, detail="方案尚未计算，无法发布")
-    dates = list(set(r["date"] for r in results))
-    main_canals = db.execute("SELECT * FROM main_canals WHERE weir_id = ?", (weir_id,)).fetchall()
-    if not main_canals:
+    mc = db.execute("SELECT * FROM main_canals WHERE id = ?", (scheme["main_canal_id"],)).fetchone()
+    if not mc:
         db.close()
-        raise HTTPException(status_code=400, detail="缺少主渠数据")
-    mc = main_canals[0]
+        raise HTTPException(status_code=400, detail="主渠不存在，请重新计算方案")
+    dates = list(set(r["date"] for r in results))
     for d in dates:
         date_results = [r for r in results if r["date"] == d]
         wl = db.execute("SELECT * FROM water_levels WHERE weir_id = ? AND date = ?", (weir_id, d)).fetchone()
